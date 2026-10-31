@@ -200,18 +200,13 @@ function parseExamples(text) {
   }).filter(e => e.t);
 }
 const parseForms = text => (text || '').split(',').map(x => x.trim()).filter(Boolean);
-// «was / were» читаємо як два слова, а не «слеш»
-const formsSpeech = w => (w.forms?.length ? [w.word, ...w.forms].join(', ').replace(/\s*\/\s*/g, ', ') : '');
 const formatExamples = list => (list || []).map(e => (e.tr ? `${e.t} | ${e.tr}` : e.t)).join('\n');
-// Озвучення відповіді: спершу «go, went, gone», потім приклади; кожна фраза підсвічує свій елемент
-function speakAnswer(w) {
-  const exBtns = [...root.querySelectorAll('.ex-play')];
-  const items = [];
-  if (w.forms?.length) items.push([formsSpeech(w), root.querySelector('.forms')]);
-  (w.examples || []).forEach((e, i) => items.push([e.t, exBtns[i]]));
-  speakSeq(items.map(x => x[0]), w.lang, items.map(x => x[1]));
+// Озвучення прикладів по черзі; кожен підсвічує свою кнопку. Форми автоматично не читаємо —
+// їх можна послухати, торкнувшись кожної на картці.
+function speakExamples(w) {
+  speakSeq((w.examples || []).map(e => e.t), w.lang, [...root.querySelectorAll('.ex-play')]);
 }
-const hasAnswerAudio = w => !!(w.forms?.length || w.examples?.length);
+const hasExamples = w => !!w.examples?.length;
 
 /* ---------------- Навігація ---------------- */
 let currentView = 'review';
@@ -311,7 +306,7 @@ function estimateMinutes() {
   const byId = new Map(db.words.map(w => [w.id, w]));
   const sec = buildQueue().reduce((t, id) => {
     const w = byId.get(id);
-    return t + (w.lastReview ? 8 : 15) + (hasAnswerAudio(w) && cfg().autoExamples ? 5 : 0);
+    return t + (w.lastReview ? 8 : 15) + (hasExamples(w) && cfg().autoExamples ? 5 : 0);
   }, 0);
   return Math.max(1, Math.round(sec / 60));
 }
@@ -448,7 +443,7 @@ function reveal() {
   const actions = root.querySelector('.actions');
   const w = currentWord();
   actions.innerHTML = gradesHtml(w);
-  if (hasAnswerAudio(w) && cfg(w.lang).autoSpeak && cfg(w.lang).autoExamples) speakAnswer(w);
+  if (hasExamples(w) && cfg(w.lang).autoSpeak && cfg(w.lang).autoExamples) speakExamples(w);
   actions.querySelector('.grades').focus({ preventScroll: true });
 }
 
@@ -505,7 +500,7 @@ document.addEventListener('keydown', e => {
   } else if (/^[1-4]$/.test(e.key) && session.revealed) {
     e.preventDefault(); grade(+e.key - 1);
   } else if ((e.key === 'e' || e.key === 'E' || e.key === 'у' || e.key === 'У') && session.revealed) {
-    const w = currentWord(); if (w && hasAnswerAudio(w)) speakAnswer(w);
+    const w = currentWord(); if (w && hasExamples(w)) speakExamples(w);
   } else if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') {
     const w = currentWord(); if (w) speak(w.word, root.querySelector('.speak'));
   }
