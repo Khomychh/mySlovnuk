@@ -302,12 +302,25 @@ function reviewsTotal(l = deck()) {
   return n;
 }
 // Груба оцінка: повторення ~8 с, нове слово ~15 с, ще ~5 с, якщо озвучуються форми чи приклади
+// Особистий темп: середній час на слово (з усіма показами через «Знову»), окремо для нових і повторень.
+// Зберігається на пристрої, бо на телефоні й комп'ютері швидкість різна.
+const PACE_MIN = 10; // скільки вимірів потрібно, щоб довіряти особистому середньому
+function recordPace(l, kind, ms) {
+  const p = ((db.meta.pace ||= {})[l] ||= {});
+  const c = (p[kind] ||= { avg: 0, n: 0 });
+  c.n++;
+  c.avg += (ms - c.avg) / Math.min(c.n, 30); // спершу звичайне середнє, далі плавне — свіжі сесії важать більше
+}
+// Час на слово: ваш, якщо вже є досить вимірів; інакше груба оцінка 8 с (повторення) і 15 с (нове) + 5 с на приклади
+function secondsFor(w) {
+  const kind = w.lastReview ? 'rev' : 'new';
+  const own = db.meta.pace?.[w.lang]?.[kind];
+  if (own && own.n >= PACE_MIN) return own.avg / 1000;
+  return (kind === 'rev' ? 8 : 15) + (hasExamples(w) && cfg(w.lang).autoExamples ? 5 : 0);
+}
 function estimateMinutes() {
   const byId = new Map(db.words.map(w => [w.id, w]));
-  const sec = buildQueue().reduce((t, id) => {
-    const w = byId.get(id);
-    return t + (w.lastReview ? 8 : 15) + (hasExamples(w) && cfg().autoExamples ? 5 : 0);
-  }, 0);
+  const sec = buildQueue().reduce((t, id) => t + secondsFor(byId.get(id)), 0);
   return Math.max(1, Math.round(sec / 60));
 }
 // Рядок цілі дня зі скельцями — той самий, що на вкладці «Прогрес»
@@ -375,7 +388,13 @@ root.addEventListener('click', e => {
 function startSession() {
   const queue = buildQueue();
   if (!queue.length) return renderReview();
-  session = { queue, total: queue.length, done: 0, revealed: false, stats: { grades: [0, 0, 0, 0], ids: new Set(), fresh: 0, started: Date.now() } };
+  const byId = new Map(db.words.map(w => [w.id, w]));
+  session = {
+    queue, total: queue.length, done: 0, revealed: false,
+    stats: { grades: [0, 0, 0, 0], ids: new Set(), fresh: 0, started: Date.now() },
+    // для особистого темпу: які слова були новими на старті й скільки часу пішло на кожне
+    newIds: new Set(queue.filter(id => !byId.get(id)?.lastReview)), wordMs: {}, cardAt: Date.now(),
+  };
   lastSummary = null;
   renderCard(true);
 }
@@ -425,6 +444,7 @@ function renderCard(fresh = true) {
     <div class="actions">
       ${session.revealed ? gradesHtml(w) : `<button class="btn primary reveal-btn" type="button" data-act="reveal">Показати переклад</button>`}
     </div>`;
+  if (fresh) session.cardAt = Date.now();
   if (fresh && cfg().autoSpeak && !session.revealed) speak(w.word, root.querySelector('.speak'));
 }
 
@@ -454,6 +474,9 @@ function grade(g) {
   const updated = schedule(w, g);
   db.words[db.words.findIndex(x => x.id === w.id)] = updated;
   logEvent(updated, 'review', g);
+  // час на картку: від показу до оцінки, не більше 90 с (раптом відволіклися)
+  session.wordMs[w.id] = (session.wordMs[w.id] || 0) + Math.min(Date.now() - session.cardAt, 90_000);
+  if (g !== 0) recordPace(w.lang, session.newIds.has(w.id) ? 'new' : 'rev', session.wordMs[w.id]);
   const st = session.stats;
   st.grades[g]++;
   if (!st.ids.has(w.id) && wasNew) st.fresh++;
