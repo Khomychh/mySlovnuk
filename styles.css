@@ -220,7 +220,10 @@ main { max-width: 600px; margin: 0 auto; padding: 6px 16px 0; }
   padding-top: 28px;
   border-top: 1px solid var(--glass-edge);
 }
-.answer-content { filter: blur(10px); opacity: .5; transition: filter .7s var(--ease-out), opacity .7s var(--ease-out); user-select: none; }
+/* Без інею: до відкриття відповіді не видно зовсім, після — вона м'яко з'являється */
+.slab:not(.revealed) .answer { display: none; }
+.slab.revealed .answer { animation: answer-in .28s var(--ease-out) both; }
+@keyframes answer-in { from { opacity: 0; transform: translateY(6px); } }
 .translation { font: 500 var(--t-xl)/1.25 var(--f-body); overflow-wrap: anywhere; }
 .comment { margin-top: 10px; color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; max-width: 62ch; }
 .frost-hint {
@@ -236,8 +239,7 @@ main { max-width: 600px; margin: 0 auto; padding: 6px 16px 0; }
 }
 .grades:focus { outline: none; }
 .slab.revealed { cursor: default; }
-.slab.revealed .answer-content { filter: none; opacity: 1; user-select: text; }
-.slab.revealed .frost-hint { opacity: 0; pointer-events: none; }
+
 
 .actions { margin-top: 16px; }
 .reveal-btn { width: 100%; }
@@ -252,10 +254,14 @@ main { max-width: 600px; margin: 0 auto; padding: 6px 16px 0; }
   font-weight: 600;
 }
 .grade small { font-weight: 400; font-size: var(--t-s); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
-.grade[data-g="0"] { box-shadow: inset 0 -3px 0 var(--g0); }
-.grade[data-g="1"] { box-shadow: inset 0 -3px 0 var(--g1); }
-.grade[data-g="2"] { box-shadow: inset 0 -3px 0 var(--g2); }
-.grade[data-g="3"] { box-shadow: inset 0 -3px 0 var(--g3); }
+.grade[data-g="0"] { box-shadow: none; background: color-mix(in srgb, var(--g0) 15%, var(--glass-hi)); border-color: color-mix(in srgb, var(--g0) 42%, var(--glass-edge)); }
+.grade[data-g="0"]:hover { background: color-mix(in srgb, var(--g0) 24%, var(--glass-hi)); }
+.grade[data-g="1"] { box-shadow: none; background: color-mix(in srgb, var(--g1) 15%, var(--glass-hi)); border-color: color-mix(in srgb, var(--g1) 42%, var(--glass-edge)); }
+.grade[data-g="1"]:hover { background: color-mix(in srgb, var(--g1) 24%, var(--glass-hi)); }
+.grade[data-g="2"] { box-shadow: none; background: color-mix(in srgb, var(--g2) 15%, var(--glass-hi)); border-color: color-mix(in srgb, var(--g2) 42%, var(--glass-edge)); }
+.grade[data-g="2"]:hover { background: color-mix(in srgb, var(--g2) 24%, var(--glass-hi)); }
+.grade[data-g="3"] { box-shadow: none; background: color-mix(in srgb, var(--g3) 15%, var(--glass-hi)); border-color: color-mix(in srgb, var(--g3) 42%, var(--glass-edge)); }
+.grade[data-g="3"]:hover { background: color-mix(in srgb, var(--g3) 24%, var(--glass-hi)); }
 .grade:active { transform: translateY(1px); }
 .keys-hint { margin-top: 12px; text-align: center; font-size: var(--t-s); color: var(--ink-faint); }
 @media (hover: none) { .keys-hint { display: none; } }
@@ -1024,3 +1030,124 @@ input::placeholder, textarea::placeholder { color: var(--ink-faint); opacity: 1;
 .install-other summary { cursor: pointer; font-size: .92rem; font-weight: 500; color: var(--ink-soft); padding: 6px 0; }
 .install-os { margin-top: 12px; font-weight: 600; font-size: .92rem; }
 .install-os + .install-steps { margin-top: 6px; }
+
+/* ============ Сесія: картка по центру, дії внизу біля пальця ============ */
+.session {
+  display: flex; flex-direction: column;
+  box-sizing: border-box;
+  /* рівно висота екрана мінус верхня смуга; знизу — місце під нижню панель */
+  height: calc(100dvh - var(--top-h, 60px));
+  min-height: 460px;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+body.in-session { padding-bottom: 0; }
+.session .progress { margin-top: 2px; }
+.session .slab {
+  /* за розміром вмісту, по центру вільного місця; не більше за доступну висоту */
+  flex: 0 1 auto;
+  margin-block: auto;
+  min-height: min(220px, 100%);
+  overflow-y: auto; overscroll-behavior: contain;
+  position: relative;
+  display: flex; flex-direction: column; justify-content: center;
+  text-align: center;
+  padding: 56px 22px 28px;
+}
+.slab-body { display: flex; flex-direction: column; align-items: center; width: 100%; }
+.slab-speak { position: absolute; top: 14px; right: 14px; }
+.session .word { flex: none; max-width: 100%; }
+.session .slab .ipa { margin-top: 10px; }
+.session .forms-ask { margin-top: 10px; }
+.session .answer { width: 100%; margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--glass-edge); }
+.session .forms { margin-left: auto; margin-right: auto; }
+.session .comment { margin-left: auto; margin-right: auto; }
+.session .examples li { justify-content: center; text-align: left; }
+.session .actions {
+  flex: none;
+  margin-top: 14px;
+}
+
+/* перехід між картками */
+.slab.enter { animation: card-in .26s var(--ease-out) both; }
+@keyframes card-in { from { opacity: 0; transform: translateY(16px) scale(.98); } }
+.slab.leave-again { animation: card-again .2s ease-in forwards; }
+@keyframes card-again { to { opacity: 0; transform: translateY(26px) scale(.95); } }
+.slab.leave-done { animation: card-done .2s ease-in forwards; }
+@keyframes card-done { to { opacity: 0; transform: translateX(-48px) rotate(-3deg); } }
+
+/* Відкриття торканням картки: місце під оцінки зарезервоване, щоб картка не зсувалась */
+.session .actions { min-height: 66px; }
+.session .slab { padding-top: 44px; scrollbar-width: none; }
+.session .slab::-webkit-scrollbar { display: none; }
+.session .slab:not(.revealed):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tap-hint { margin-top: 22px; font-size: var(--t-s); color: var(--ink-faint); }
+
+.session .slab { padding-top: 30px; padding-bottom: 26px; }
+.ipa-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px; }
+.session .slab .ipa-row .ipa { margin-top: 0; }
+.ipa-row .speak { width: 40px; height: 40px; }
+.ipa-row .speak svg { width: 20px; height: 20px; }
+
+/* ============ Кнопки оцінок: одна скляна панель, чотири секції ============ */
+.grades {
+  display: flex; gap: 4px; padding: 4px;
+  border-radius: 22px;
+  border: 1px solid var(--glass-edge);
+  background: linear-gradient(160deg, var(--glass-hi), var(--glass-lo));
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 14px 30px -22px var(--glass-shade);
+}
+.grade[data-g="0"] { --c: var(--g0); }
+.grade[data-g="1"] { --c: var(--g1); }
+.grade[data-g="2"] { --c: var(--g2); flex-grow: 1.3; } /* «Добре» — найчастіша, тож трохи ширша */
+.grade[data-g="3"] { --c: var(--g3); }
+.grades .grade {
+  flex: 1 1 0; min-width: 0;
+  min-height: 58px; padding: 8px 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: 0; border-radius: 18px;
+  background: color-mix(in srgb, var(--c) 11%, transparent);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  box-shadow: none;
+  transition: background-color .15s ease, color .15s ease, transform .1s ease;
+}
+.grades .grade-name { font-weight: 600; font-size: .95rem; color: color-mix(in srgb, var(--c) 72%, var(--ink)); }
+.grades .grade small { font-size: var(--t-s); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.grades .grade:hover { background: color-mix(in srgb, var(--c) 20%, transparent); }
+.grades .grade:active { transform: scale(.97); }
+.grades .grade:focus-visible { outline: 2px solid var(--c); outline-offset: 1px; }
+.grades .grade.chosen { background: var(--c); }
+.grades .grade.chosen .grade-name, .grades .grade.chosen small { color: #fff; }
+
+.grades .grade[data-g="2"] { flex-grow: 1.3; }
+
+/* Секції оцінок — теж скло: відблиск угорі, світла обвідка; вибрана — кольорове скло, а не пласка заливка */
+.grades .grade {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.38), rgba(255,255,255,0) 55%),
+    color-mix(in srgb, var(--c) 13%, var(--glass-lo));
+  box-shadow: inset 0 0 0 1px var(--glass-edge), inset 0 1px 0 rgba(255,255,255,.55);
+}
+.grades .grade:hover {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,0) 55%),
+    color-mix(in srgb, var(--c) 22%, var(--glass-lo));
+}
+.grades .grade.chosen {
+  background:
+    radial-gradient(70% 60% at 30% 18%, rgba(255,255,255,.5), transparent 70%),
+    linear-gradient(170deg, color-mix(in srgb, var(--c) 72%, #fff) 0%, var(--c) 55%, color-mix(in srgb, var(--c) 82%, #000) 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), inset 0 -2px 4px rgba(0,0,0,.14), 0 6px 14px -8px var(--c);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .grades .grade { background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 55%), color-mix(in srgb, var(--c) 16%, var(--glass-lo)); box-shadow: inset 0 0 0 1px var(--glass-edge), inset 0 1px 0 rgba(255,255,255,.18); }
+}
+:root[data-theme="dark"] .grades .grade { background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 55%), color-mix(in srgb, var(--c) 16%, var(--glass-lo)); box-shadow: inset 0 0 0 1px var(--glass-edge), inset 0 1px 0 rgba(255,255,255,.18); }
+/* вибрана й наведена кнопка мають перемагати темні правила вище */
+:root .grades .grade.grade:hover { background: linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,0) 55%), color-mix(in srgb, var(--c) 24%, var(--glass-lo)); }
+:root .grades .grade.grade.chosen {
+  background:
+    radial-gradient(70% 60% at 30% 18%, rgba(255,255,255,.5), transparent 70%),
+    linear-gradient(170deg, color-mix(in srgb, var(--c) 72%, #fff) 0%, var(--c) 55%, color-mix(in srgb, var(--c) 82%, #000) 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), inset 0 -2px 4px rgba(0,0,0,.14), 0 6px 14px -8px var(--c);
+}

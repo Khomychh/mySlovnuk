@@ -88,11 +88,16 @@ function schedule(w, g, now = Date.now()) {
     c.ease = Math.max(1.3, ease - 0.2);
     c.due = now + 10 * MIN;
   } else {
-    const iv0 = c.interval || 0;
+    const iv0 = c.interval || 0, r = c.reps || 0;
+    const hard = r === 0 ? 1 : Math.max(iv0 + 1, Math.round(iv0 * 1.2));
+    let good = r === 0 ? 1 : r === 1 ? 3 : Math.max(iv0 + 1, Math.round(iv0 * ease));
+    let easy = r === 0 ? 4 : Math.max(iv0 + 2, Math.round(iv0 * ease * 1.3));
+    // для вже повторених слів кнопки завжди дають різні інтервали: Важко < Добре < Легко
+    if (r > 0) { good = Math.max(good, hard + 1); easy = Math.max(easy, good + 1); }
     let iv;
-    if (g === 1) { iv = c.reps === 0 ? 1 : Math.max(iv0 + 1, Math.round(iv0 * 1.2)); ease = Math.max(1.3, ease - 0.15); }
-    else if (g === 2) { iv = c.reps === 0 ? 1 : c.reps === 1 ? 3 : Math.max(iv0 + 1, Math.round(iv0 * ease)); }
-    else { iv = c.reps === 0 ? 4 : Math.max(iv0 + 2, Math.round(iv0 * ease * 1.3)); ease += 0.15; }
+    if (g === 1) { iv = hard; ease = Math.max(1.3, ease - 0.15); }
+    else if (g === 2) iv = good;
+    else { iv = easy; ease += 0.15; }
     c.ease = ease;
     c.reps = (c.reps || 0) + 1;
     c.interval = iv;
@@ -107,8 +112,8 @@ function fmtSpan(ms) {
   if (ms < 60 * MIN) return `${Math.max(1, Math.round(ms / MIN))} хв`;
   const d = Math.round(ms / DAY);
   if (d < 1) return `${Math.round(ms / (60 * MIN))} год`;
-  if (d < 7) return `${d} д`;
-  if (d < 30) return `${Math.round(d / 7)} тиж`;
+  if (d < 14) return `${d} д`;
+  if (d < 60) return `${Math.round(d / 7)} тиж`;
   if (d < 365) return `${Math.round(d / 30)} міс`;
   return `${(d / 365).toFixed(d < 3650 ? 1 : 0).replace('.0', '')} р`;
 }
@@ -212,6 +217,7 @@ const hasExamples = w => !!w.examples?.length;
 let currentView = 'review';
 function go(view) {
   currentView = view;
+  if (view !== 'review') setSessionLayout(false);
   document.querySelectorAll('.view').forEach(v => { v.hidden = v.dataset.view !== view; });
   document.querySelectorAll('.dock [data-go]').forEach(b => {
     if (b.dataset.go === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -231,6 +237,7 @@ const root = $('#reviewRoot');
 
 function renderReview() {
   if (session && session.queue.length) return renderCard();
+  setSessionLayout(false);
   session = null;
   const c = counts();
   if (c.total === 0) {
@@ -396,17 +403,27 @@ function startSession() {
     newIds: new Set(queue.filter(id => !byId.get(id)?.lastReview)), wordMs: {}, cardAt: Date.now(),
   };
   lastSummary = null;
-  renderCard(true);
+  renderCard(true, true); // перша картка сесії теж з'являється рухом
 }
 const currentWord = () => session && db.words.find(w => w.id === session.queue[0]);
 
-function renderCard(fresh = true) {
+// Під час сесії сторінка не гортається: сесія займає рівно екран (висоту верхньої смуги міряємо)
+function setSessionLayout(on) {
+  document.body.classList.toggle('in-session', on);
+  if (on) {
+    const main = document.querySelector('main');
+    document.documentElement.style.setProperty('--top-h', `${Math.ceil(main.getBoundingClientRect().top + window.scrollY + parseFloat(getComputedStyle(main).paddingTop))}px`);
+    window.scrollTo(0, 0);
+  }
+}
+function renderCard(fresh = true, enter = false) {
   const w = currentWord();
   if (!w) { session = null; return renderReview(); }
+  setSessionLayout(currentView === 'review');
   const pct = Math.round((session.done / Math.max(session.total, 1)) * 100);
   const longest = Math.max(...w.word.split(/\s+/).map(t => t.length));
   const size = w.word.length > 18 || longest > 13 ? 'long' : longest > 8 ? 'mid' : '';
-  root.innerHTML = `
+  root.innerHTML = `<div class="session">
     <div class="progress">
       <button class="icon-btn" type="button" data-act="exit" aria-label="Вийти з повторення" title="Вийти">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
@@ -417,15 +434,19 @@ function renderCard(fresh = true) {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>
       </button>
     </div>
-    <article class="slab glass ${session.revealed ? 'revealed' : ''}" aria-live="polite">
-      <div class="slab-top">
-        <h2 class="word ${size}" lang="${esc(w.lang)}">${esc(w.word)}</h2>
+    <article class="slab glass ${session.revealed ? 'revealed' : ''} ${enter ? 'enter' : ''}" aria-live="polite"
+      ${session.revealed ? '' : 'role="button" tabindex="0" aria-label="Показати переклад"'}>
+      <div class="slab-body">
+      <h2 class="word ${size}" lang="${esc(w.lang)}">${esc(w.word)}</h2>
+      <!-- вимова поруч із транскрипцією: нічого не перекриває навіть у тісній картці -->
+      <div class="ipa-row">
+        ${w.transcription ? `<p class="ipa">${esc(w.transcription)}</p>` : ''}
         <button class="speak" type="button" data-act="speak" aria-label="Прослухати вимову">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
         </button>
       </div>
-      ${w.transcription ? `<p class="ipa">${esc(w.transcription)}</p>` : ''}
       ${w.forms?.length ? `<p class="forms-ask">+ ${w.forms.length} ${plural(w.forms.length, ['форма', 'форми', 'форм'])}</p>` : ''}
+      ${!session.revealed && reviewsTotal() < 20 ? '<p class="tap-hint" aria-hidden="true">Торкніться, щоб побачити переклад</p>' : ''}
       <div class="answer">
         <div class="answer-content" ${session.revealed ? '' : 'aria-hidden="true"'}>
           <p class="translation">${esc(w.translation)}</p>
@@ -440,25 +461,38 @@ function renderCard(fresh = true) {
           </li>`).join('')}</ul>` : ''}
         </div>
       </div>
+      </div>
     </article>
     <div class="actions">
-      ${session.revealed ? gradesHtml(w) : `<button class="btn primary reveal-btn" type="button" data-act="reveal">Показати переклад</button>`}
-    </div>`;
+      ${session.revealed ? gradesHtml(w) : ''}
+    </div>
+  </div>`;
   if (fresh) session.cardAt = Date.now();
   if (fresh && cfg().autoSpeak && !session.revealed) speak(w.word, root.querySelector('.speak'));
 }
 
 function gradesHtml(w) {
   const names = ['Знову', 'Важко', 'Добре', 'Легко'];
+  // якщо після округлення дві кнопки виглядають однаково («1 тиж» і «1 тиж»), показуємо точні дні
+  let labels = [0, 1, 2, 3].map(g => previewLabel(w, g));
+  if (new Set(labels.slice(1)).size < 3) labels = labels.map((l, g) => (g === 0 ? l : `${schedule(w, g).interval} д`));
   return `<div class="grades" tabindex="-1" role="group" aria-label="Наскільки легко згадали">${names.map((n, g) =>
-    `<button class="grade" type="button" data-g="${g}">${n}<small>${previewLabel(w, g)}</small></button>`).join('')}</div>`;
+    `<button class="grade" type="button" data-g="${g}"><span class="grade-name">${n}</span><small>${labels[g]}</small></button>`).join('')}</div>`;
 }
 
 function reveal() {
   if (!session || session.revealed) return;
   session.revealed = true;
   const slab = root.querySelector('.slab');
+  // картка плавно більшає під відповідь (від центру, бо стоїть посередині)
+  const h0 = slab.offsetHeight;
   slab.classList.add('revealed');
+  slab.removeAttribute('role'); slab.removeAttribute('tabindex'); slab.removeAttribute('aria-label');
+  slab.querySelector('.tap-hint')?.remove();
+  const h1 = slab.offsetHeight;
+  if (h1 !== h0 && !matchMedia('(prefers-reduced-motion: reduce)').matches && slab.animate) {
+    slab.animate([{ height: `${h0}px` }, { height: `${h1}px` }], { duration: 260, easing: 'cubic-bezier(.2,.7,.2,1)' });
+  }
   slab.querySelector('.answer-content').removeAttribute('aria-hidden');
   const actions = root.querySelector('.actions');
   const w = currentWord();
@@ -469,7 +503,7 @@ function reveal() {
 
 function grade(g) {
   const w = currentWord();
-  if (!w || !session.revealed) return;
+  if (!w || !session.revealed || session.locked) return;
   const wasNew = !w.lastReview;
   const updated = schedule(w, g);
   db.words[db.words.findIndex(x => x.id === w.id)] = updated;
@@ -486,12 +520,18 @@ function grade(g) {
   else session.done++;
   session.revealed = false;
   persist();
-  if (!session.queue.length) {
-    const st = session.stats;
-    endSession();
-    return;
-  }
-  renderCard(true);
+  // Картка йде: після «Знову» — назад у стос, після інших оцінок — убік. Поки триває рух, натискання ігноруємо.
+  const delay = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200;
+  const slab = root.querySelector('.slab');
+  if (slab && delay) slab.classList.add(g === 0 ? 'leave-again' : 'leave-done');
+  root.querySelector(`.grade[data-g="${g}"]`)?.classList.add('chosen'); // вибрана оцінка на мить заливається кольором
+  session.locked = true;
+  setTimeout(() => {
+    if (!session) return; // вийшли з сесії, поки картка відлітала
+    session.locked = false;
+    if (!session.queue.length) return endSession();
+    renderCard(true, true);
+  }, delay);
 }
 
 // Кінець сесії — повний чи достроковий. Якщо нічого не оцінено, підсумок не потрібен.

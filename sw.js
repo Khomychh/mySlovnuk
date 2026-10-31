@@ -1,5 +1,5 @@
 // Офлайн-кеш оболонки застосунку. Змініть VERSION після оновлення файлів.
-const VERSION = 'slovnyk-v36';
+const VERSION = 'slovnyk-v45';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'manifest.webmanifest', 'privacy.html', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
