@@ -1,0 +1,1496 @@
+// Словник — PWA для особистого списку слів
+// Дані: localStorage. Бекап: прихована папка Google Диска (appDataFolder).
+
+const $ = (s, r = document) => r.querySelector(s);
+const MIN = 60_000;
+const DAY = 86_400_000;
+const KEY = 'slovnyk.v1';
+const TOKEN_KEY = 'slovnyk.gtoken';
+const BACKUP_NAME = 'slovnyk-backup.json';
+const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+
+// Кожна мова — окрема колода зі своїми словами, чергою й налаштуваннями.
+// Ключ колоди — базовий код мови ('en', 'de'); акцент обирається голосом.
+const langDefaults = { voiceURI: '', rate: 0.95, autoSpeak: true, autoExamples: true, newPerDay: 20, goal: 10, updatedAt: 0 };
+const baseLang = l => (l || 'en').replace('_', '-').split('-')[0].toLowerCase();
+
+// Перехід зі старого формату, де мова була одна на весь словник
+function migrate(d) {
+  const s = d.settings || {};
+  if (!s.langs) {
+    const b = baseLang(s.lang || 'en-US');
+    const region = /-/.test(s.lang || '') ? s.lang.replace('_', '-') : '';
+    s.langs = { [b]: { ...langDefaults, region, voiceURI: s.voiceURI || '', rate: s.rate ?? 0.95, autoSpeak: s.autoSpeak ?? true, newPerDay: s.newPerDay ?? 20, updatedAt: s.updatedAt || 0 } };
+    s.active = s.active || b;
+    for (const k of ['lang', 'voiceURI', 'rate', 'autoSpeak', 'newPerDay']) delete s[k];
+  }
+  s.active = s.active || Object.keys(s.langs)[0] || 'en';
+  if (!s.langs[s.active]) s.langs[s.active] = { ...langDefaults };
+  const words = (d.words || []).map(w => (w.lang || w.deleted ? w : { ...w, lang: s.active }));
+  for (const w of words) if (w.lang && !s.langs[w.lang]) s.langs[w.lang] = { ...langDefaults };
+  const meta = { ...d.meta };
+  if (meta.newDay) { meta.newBy = { [s.active]: { day: meta.newDay, count: meta.newCount || 0 } }; delete meta.newDay; delete meta.newCount; }
+  meta.newBy ||= {};
+  delete s.clientId; // Client ID тепер лише в config.js
+  for (const l of Object.keys(s.langs)) s.langs[l] = { ...langDefaults, ...s.langs[l] };
+  // журнал днів окремо для кожної мови:
+  // { мова: { 'YYYY-MM-DD': { goal, w: { [id]: { g: [оцінки], a: 1 якщо додано цього дня } } } } }
+  return { words, settings: { updatedAt: 0, ...s }, meta, log: d.log || {} };
+}
+
+/* ---------------- Сховище ---------------- */
+function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem(KEY));
+    if (d) return migrate(d);
+  } catch {}
+  return migrate({});
+}
+const db = load();
+const CLIENT_ID = (window.SLOVNYK_CONFIG?.googleClientId || '').trim();
+
+const deck = () => db.settings.active;
+const cfg = (l = deck()) => (db.settings.langs[l] ||= { ...langDefaults });
+
+function saveLocal() {
+  try { localStorage.setItem(KEY, JSON.stringify(db)); }
+  catch { toast('Не вдалося зберегти на пристрої: пам\'ять браузера заповнена. Завантажте копію у файл.'); }
+}
+function persist() { saveLocal(); scheduleBackup(); }
+
+const live = (l = deck()) => db.words.filter(w => !w.deleted && w.lang === l);
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+const startOfDay = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const dayKey = t => new Date(t).toLocaleDateString('sv');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function plural(n, [one, few, many]) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+const nWords = n => `${n} ${plural(n, ['слово', 'слова', 'слів'])}`;
+
+/* ---------------- Інтервальне повторення (SM-2, як в Anki) ---------------- */
+function newWord(fields) {
+  const now = Date.now();
+  return { id: uid(), lang: deck(), ...fields, createdAt: now, updatedAt: now, ease: 2.5, interval: 0, reps: 0, lapses: 0, due: now, lastReview: 0 };
+}
+
+function schedule(w, g, now = Date.now()) {
+  const c = { ...w };
+  let ease = c.ease || 2.5;
+  if (g === 0) {
+    c.lapses = (c.lapses || 0) + 1;
+    c.reps = 0;
+    c.interval = 0;
+    c.ease = Math.max(1.3, ease - 0.2);
+    c.due = now + 10 * MIN;
+  } else {
+    const iv0 = c.interval || 0;
+    let iv;
+    if (g === 1) { iv = c.reps === 0 ? 1 : Math.max(iv0 + 1, Math.round(iv0 * 1.2)); ease = Math.max(1.3, ease - 0.15); }
+    else if (g === 2) { iv = c.reps === 0 ? 1 : c.reps === 1 ? 3 : Math.max(iv0 + 1, Math.round(iv0 * ease)); }
+    else { iv = c.reps === 0 ? 4 : Math.max(iv0 + 2, Math.round(iv0 * ease * 1.3)); ease += 0.15; }
+    c.ease = ease;
+    c.reps = (c.reps || 0) + 1;
+    c.interval = iv;
+    c.due = startOfDay(now) + iv * DAY;
+  }
+  c.lastReview = now;
+  c.updatedAt = now;
+  return c;
+}
+
+function fmtSpan(ms) {
+  if (ms < 60 * MIN) return `${Math.max(1, Math.round(ms / MIN))} хв`;
+  const d = Math.round(ms / DAY);
+  if (d < 1) return `${Math.round(ms / (60 * MIN))} год`;
+  if (d < 7) return `${d} д`;
+  if (d < 30) return `${Math.round(d / 7)} тиж`;
+  if (d < 365) return `${Math.round(d / 30)} міс`;
+  return `${(d / 365).toFixed(d < 3650 ? 1 : 0).replace('.0', '')} р`;
+}
+function previewLabel(w, g) {
+  const now = Date.now();
+  const c = schedule(w, g, now);
+  if (g === 0) return '10 хв';
+  return fmtSpan(c.interval * DAY);
+}
+function dueLabel(w) {
+  if (!w.lastReview) return { text: 'нове', now: false };
+  const now = Date.now();
+  if (w.due <= now) return { text: 'сьогодні', now: true };
+  const days = Math.round((startOfDay(w.due) - startOfDay(now)) / DAY);
+  if (days === 1) return { text: 'завтра', now: false };
+  return { text: `за ${fmtSpan(days * DAY)}`, now: false };
+}
+
+function newDoneToday(l = deck()) { const n = db.meta.newBy[l]; return n && n.day === dayKey(Date.now()) ? n.count : 0; }
+function countNewDone(l) {
+  const today = dayKey(Date.now());
+  const n = db.meta.newBy[l];
+  db.meta.newBy[l] = n && n.day === today ? { day: today, count: n.count + 1 } : { day: today, count: 1 };
+}
+function counts(l = deck()) {
+  const now = Date.now();
+  const words = live(l);
+  const due = words.filter(w => w.lastReview && w.due <= now).length;
+  const freshAll = words.filter(w => !w.lastReview).length;
+  const fresh = Math.min(freshAll, Math.max(0, cfg(l).newPerDay - newDoneToday(l)));
+  const learned = words.filter(w => w.interval >= 21).length;
+  return { total: words.length, due, fresh, freshAll, learned };
+}
+function buildQueue() {
+  const now = Date.now();
+  const words = live();
+  const due = words.filter(w => w.lastReview && w.due <= now).sort((a, b) => a.due - b.due);
+  const fresh = words.filter(w => !w.lastReview).sort((a, b) => a.createdAt - b.createdAt)
+    .slice(0, Math.max(0, cfg().newPerDay - newDoneToday()));
+  // нові слова вплітаємо між повтореннями: одне нове після кожних трьох
+  const q = [];
+  let i = 0, j = 0;
+  while (i < due.length || j < fresh.length) {
+    for (let k = 0; k < 3 && i < due.length; k++) q.push(due[i++].id);
+    if (j < fresh.length) q.push(fresh[j++].id);
+  }
+  return q;
+}
+
+/* ---------------- Озвучення ---------------- */
+let voices = [];
+const synth = 'speechSynthesis' in window ? window.speechSynthesis : null;
+function loadVoices() { if (!synth) return; voices = synth.getVoices(); renderVoiceSettings(); }
+
+
+// Регіон за замовчуванням, коли голос не вибрано
+const PREFERRED = { en: 'en-US', pt: 'pt-PT', es: 'es-ES', fr: 'fr-FR', de: 'de-DE', zh: 'zh-CN', nl: 'nl-NL', sv: 'sv-SE' };
+const voicesFor = l => voices.filter(v => baseLang(v.lang) === l);
+function pickVoice(l) {
+  const vs = voicesFor(l);
+  const pref = (cfg(l).region || PREFERRED[l] || '').toLowerCase();
+  return vs.find(v => v.voiceURI === cfg(l).voiceURI)
+    || vs.find(v => v.lang.replace('_', '-').toLowerCase() === pref)
+    || vs.find(v => v.default)
+    || vs[0];
+}
+function utterance(text, l, btn) {
+  const u = new SpeechSynthesisUtterance(text);
+  const v = pickVoice(l);
+  u.lang = v?.lang || cfg(l).region || PREFERRED[l] || l;
+  if (v) u.voice = v;
+  u.rate = cfg(l).rate;
+  if (btn) {
+    u.onstart = () => btn.classList.add('speaking');
+    u.onend = u.onerror = () => btn.classList.remove('speaking');
+  }
+  return u;
+}
+function speak(text, btn, l = deck()) { speakSeq([text], l, [btn]); }
+// Кілька фраз по черзі (приклади); кожна підсвічує свою кнопку
+function speakSeq(texts, l = deck(), btns = []) {
+  texts = texts.filter(Boolean);
+  if (!synth) { toast('Цей браузер не вміє озвучувати текст'); return; }
+  if (!texts.length) return;
+  synth.cancel();
+  document.querySelectorAll('.speaking').forEach(b => b.classList.remove('speaking'));
+  // Chrome іноді ковтає фразу одразу після cancel()
+  setTimeout(() => texts.forEach((t, i) => synth.speak(utterance(t, l, btns[i]))), 40);
+}
+
+/* ---------------- Приклади ---------------- */
+// Вводяться в редакторі по рядку: «I love you | Я люблю тебе». Переклад після | необов'язковий.
+function parseExamples(text) {
+  return (text || '').split('\n').map(line => {
+    const i = line.indexOf('|');
+    return { t: (i < 0 ? line : line.slice(0, i)).trim(), tr: i < 0 ? '' : line.slice(i + 1).trim() };
+  }).filter(e => e.t);
+}
+const parseForms = text => (text || '').split(',').map(x => x.trim()).filter(Boolean);
+// «was / were» читаємо як два слова, а не «слеш»
+const formsSpeech = w => (w.forms?.length ? [w.word, ...w.forms].join(', ').replace(/\s*\/\s*/g, ', ') : '');
+const formatExamples = list => (list || []).map(e => (e.tr ? `${e.t} | ${e.tr}` : e.t)).join('\n');
+// Озвучення відповіді: спершу «go, went, gone», потім приклади; кожна фраза підсвічує свій елемент
+function speakAnswer(w) {
+  const exBtns = [...root.querySelectorAll('.ex-play')];
+  const items = [];
+  if (w.forms?.length) items.push([formsSpeech(w), root.querySelector('.forms')]);
+  (w.examples || []).forEach((e, i) => items.push([e.t, exBtns[i]]));
+  speakSeq(items.map(x => x[0]), w.lang, items.map(x => x[1]));
+}
+const hasAnswerAudio = w => !!(w.forms?.length || w.examples?.length);
+
+/* ---------------- Навігація ---------------- */
+let currentView = 'review';
+function go(view) {
+  currentView = view;
+  document.querySelectorAll('.view').forEach(v => { v.hidden = v.dataset.view !== view; });
+  document.querySelectorAll('.dock [data-go]').forEach(b => {
+    if (b.dataset.go === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  if (view === 'review') renderReview();
+  if (view === 'list') renderList();
+  if (view === 'settings') renderSettings();
+  if (view === 'progress') renderProgress();
+  window.scrollTo({ top: 0 });
+}
+document.querySelectorAll('.dock [data-go]').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
+$('#addBtn').addEventListener('click', () => openEditor());
+
+/* ---------------- Повторення ---------------- */
+let session = null; // { queue: [id], total, done, revealed }
+const root = $('#reviewRoot');
+
+function renderReview() {
+  if (session && session.queue.length) return renderCard();
+  session = null;
+  const c = counts();
+  if (c.total === 0) {
+    root.innerHTML = `
+      <div class="intro glass">
+        <h2>${esc(langLabel(deck()))}: слів поки немає</h2>
+        <p>Додайте слово, яке хочете запам'ятати: переклад, транскрипцію та коментар. Застосунок сам нагадає, коли його повторити.</p>
+        <button class="btn primary" type="button" data-act="add">Додати перше слово</button>
+      </div>`;
+    return;
+  }
+  const todo = c.due + c.fresh;
+  const tally = `<div class="tally"><span>У списку <b>${nWords(c.total)}</b></span><span>Добре знаю <b>${c.learned}</b></span></div>`;
+  const nextLine = () => {
+    const next = live().filter(w => w.lastReview).sort((a, b) => a.due - b.due)[0];
+    return next ? `Наступні слова чекатимуть ${esc(dueLabel(next).text)}.` : 'Додайте нові слова, щоб продовжити.';
+  };
+  if (todo === 0 && lastSummary && lastSummary.lang === deck()) {
+    root.innerHTML = summaryHtml(lastSummary, nextLine(), c);
+    return;
+  }
+  if (todo === 0) {
+    root.innerHTML = `
+      <div class="intro glass">
+        <h2>На сьогодні все повторено</h2>
+        <p>${c.freshAll ? 'Ліміт нових слів на сьогодні вичерпано. ' : ''}${nextLine()}</p>
+        ${goalStrip()}
+        ${tally}
+        <button class="btn ghost" type="button" data-act="add">Додати слово</button>
+      </div>`;
+    return;
+  }
+  const parts = [];
+  if (c.due) parts.push(`${nWords(c.due)} на повторення`);
+  if (c.fresh) parts.push(`${c.fresh} ${plural(c.fresh, ['нове', 'нові', 'нових'])}`);
+  // Пояснення потрібне лише на початку; далі — скільки часу займе сесія
+  const help = reviewsTotal() < 20
+    ? 'Подивіться на слово, згадайте переклад, а тоді відкрийте його та оцініть, наскільки легко пригадали.'
+    : (m => `Займе приблизно ${m} ${plural(m, ['хвилину', 'хвилини', 'хвилин'])}.`)(estimateMinutes());
+  root.innerHTML = `
+    <div class="intro glass">
+      <h2>Сьогодні: ${parts.join(' і ')}</h2>
+      <p>${help}</p>
+      ${goalStrip()}
+      ${tally}
+      <button class="btn primary" type="button" data-act="start">Почати повторення</button>
+    </div>`;
+}
+
+// Скільки оцінок уже поставлено в цій мові (для підказки новачкам)
+function reviewsTotal(l = deck()) {
+  let n = 0;
+  for (const d of Object.values(db.log[l] || {})) for (const e of Object.values(d.w)) n += e.g?.length || 0;
+  return n;
+}
+// Груба оцінка: повторення ~8 с, нове слово ~15 с, ще ~5 с, якщо озвучуються форми чи приклади
+function estimateMinutes() {
+  const byId = new Map(db.words.map(w => [w.id, w]));
+  const sec = buildQueue().reduce((t, id) => {
+    const w = byId.get(id);
+    return t + (w.lastReview ? 8 : 15) + (hasAnswerAudio(w) && cfg().autoExamples ? 5 : 0);
+  }, 0);
+  return Math.max(1, Math.round(sec / 60));
+}
+// Рядок цілі дня зі скельцями — той самий, що на вкладці «Прогрес»
+function goalStrip() {
+  const n = dayCount(dayKey(Date.now())), goal = goalOf();
+  const done = n >= goal;
+  const text = done
+    ? `<b>Ціль на сьогодні досягнуто</b>: ${nWords(n)}${n > goal ? ` при цілі ${goal}` : ''}`
+    : n ? `Ціль на сьогодні: <b>${n} з ${goal}</b>` : `Ціль на сьогодні: <b>${nWords(goal)}</b>`;
+  return `<div class="goal-strip ${done ? 'done' : ''}">
+    <p class="goal-strip-text">${done ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>' : ''}<span>${text}</span></p>
+    <div role="progressbar" aria-label="Ціль дня" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${Math.min(n, goal)}">${pebblesHtml(n, goal)}</div>
+  </div>`;
+}
+// Підсумок щойно завершеної сесії
+let lastSummary = null;
+function summaryHtml(sm, nextLine, c) {
+  const mins = Math.round((sm.ended - sm.started) / MIN);
+  const took = mins < 1 ? 'менш ніж за хвилину' : `за ${mins} ${plural(mins, ['хвилину', 'хвилини', 'хвилин'])}`;
+  const names = ['Знову', 'Важко', 'Добре', 'Легко'];
+  return `
+    <div class="intro glass summary">
+      <h2 tabindex="-1">Повторення завершено</h2>
+      <p>Повторено ${nWords(sm.words)} ${took}${sm.fresh ? `, з них ${sm.fresh} ${plural(sm.fresh, ['нове', 'нові', 'нових'])}` : ''}. ${nextLine}</p>
+      <div class="tally">${sm.grades.map((n, i) => (n ? `<span class="g${i}">${names[i]} <b>${n}</b></span>` : '')).join('')}</div>
+      ${goalStrip()}
+      <div class="row-btns">
+        <button class="btn primary" type="button" data-act="progress">Переглянути прогрес</button>
+        <button class="btn ghost" type="button" data-act="add">Додати слово</button>
+      </div>
+    </div>`;
+}
+
+root.addEventListener('click', e => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'add') return openEditor();
+  if (act === 'start') return startSession();
+  if (act === 'progress') return go('progress');
+  if (act === 'speak-form') {
+    e.stopPropagation();
+    const w = currentWord(), b = e.target.closest('button');
+    const f = [w.word, ...(w.forms || [])][+b.dataset.i];
+    if (f) speak(f.replace(/\s*\/\s*/g, ', '), b, w.lang);
+    return;
+  }
+  if (act === 'speak-ex') {
+    e.stopPropagation();
+    const w = currentWord(), b = e.target.closest('button');
+    const ex = w?.examples?.[+b.dataset.i];
+    if (ex) speak(ex.t, b, w.lang);
+    return;
+  }
+  if (act === 'speak') { e.stopPropagation(); const w = currentWord(); if (w) speak(w.word, e.target.closest('button')); return; }
+  if (act === 'edit') { e.stopPropagation(); const w = currentWord(); if (w) openEditor(w); return; }
+  if (act === 'reveal' || (e.target.closest('.slab') && !session?.revealed)) return reveal();
+  const g = e.target.closest('[data-g]');
+  if (g) grade(+g.dataset.g);
+});
+
+function startSession() {
+  const queue = buildQueue();
+  if (!queue.length) return renderReview();
+  session = { queue, total: queue.length, done: 0, revealed: false, stats: { grades: [0, 0, 0, 0], ids: new Set(), fresh: 0, started: Date.now() } };
+  lastSummary = null;
+  renderCard(true);
+}
+const currentWord = () => session && db.words.find(w => w.id === session.queue[0]);
+
+function renderCard(fresh = true) {
+  const w = currentWord();
+  if (!w) { session = null; return renderReview(); }
+  const pct = Math.round((session.done / Math.max(session.total, 1)) * 100);
+  const longest = Math.max(...w.word.split(/\s+/).map(t => t.length));
+  const size = w.word.length > 18 || longest > 13 ? 'long' : longest > 8 ? 'mid' : '';
+  root.innerHTML = `
+    <div class="progress">
+      <span>${session.done} з ${session.total}</span>
+      <span class="progress-bar"><i style="width:${pct}%"></i></span>
+      <button class="icon-btn" type="button" data-act="edit" aria-label="Редагувати слово">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>
+      </button>
+    </div>
+    <article class="slab glass ${session.revealed ? 'revealed' : ''}" aria-live="polite">
+      <div class="slab-top">
+        <h2 class="word ${size}" lang="${esc(w.lang)}">${esc(w.word)}</h2>
+        <button class="speak" type="button" data-act="speak" aria-label="Прослухати вимову">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        </button>
+      </div>
+      ${w.transcription ? `<p class="ipa">${esc(w.transcription)}</p>` : ''}
+      ${w.forms?.length ? `<p class="forms-ask">Згадайте переклад і ${w.forms.length === 1 ? 'форму' : `${w.forms.length} ${plural(w.forms.length, ['форму', 'форми', 'форм'])}`}</p>` : ''}
+      <div class="answer">
+        <div class="answer-content" ${session.revealed ? '' : 'aria-hidden="true"'}>
+          <p class="translation">${esc(w.translation)}</p>
+          ${w.forms?.length ? `<div class="forms" lang="${esc(w.lang)}">${[w.word, ...w.forms].map((f, i) =>
+            `<button type="button" class="form ${i === 0 ? 'base' : ''}" data-act="speak-form" data-i="${i}">${esc(f)}</button>`).join('')}</div>` : ''}
+          ${w.comment ? `<p class="comment">${esc(w.comment)}</p>` : ''}
+          ${w.examples?.length ? `<ul class="examples">${w.examples.map((ex, i) => `<li>
+            <button type="button" class="ex-play" data-act="speak-ex" data-i="${i}" aria-label="Прослухати приклад ${i + 1}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/></svg>
+            </button>
+            <span class="ex-text"><span class="ex-t" lang="${esc(w.lang)}">${esc(ex.t)}</span>${ex.tr ? `<span class="ex-tr">${esc(ex.tr)}</span>` : ''}</span>
+          </li>`).join('')}</ul>` : ''}
+        </div>
+        <div class="frost-hint" aria-hidden="true"><span>Торкніться, щоб побачити переклад</span></div>
+      </div>
+    </article>
+    <div class="actions">
+      ${session.revealed ? gradesHtml(w) : `<button class="btn primary reveal-btn" type="button" data-act="reveal">Показати переклад</button>`}
+      <p class="keys-hint">${session.revealed ? `Клавіші 1–4 для оцінки, R повторює вимову${hasAnswerAudio(w) ? ', E читає форми й приклади' : ''}` : 'Пробіл відкриває переклад, R повторює вимову'}</p>
+    </div>`;
+  if (fresh && cfg().autoSpeak && !session.revealed) speak(w.word, root.querySelector('.speak'));
+}
+
+function gradesHtml(w) {
+  const names = ['Знову', 'Важко', 'Добре', 'Легко'];
+  return `<div class="grades" tabindex="-1" role="group" aria-label="Наскільки легко згадали">${names.map((n, g) =>
+    `<button class="grade" type="button" data-g="${g}">${n}<small>${previewLabel(w, g)}</small></button>`).join('')}</div>`;
+}
+
+function reveal() {
+  if (!session || session.revealed) return;
+  session.revealed = true;
+  const slab = root.querySelector('.slab');
+  slab.classList.add('revealed');
+  slab.querySelector('.answer-content').removeAttribute('aria-hidden');
+  const actions = root.querySelector('.actions');
+  const w = currentWord();
+  actions.innerHTML = `${gradesHtml(w)}<p class="keys-hint">Клавіші 1–4 для оцінки, R повторює вимову${hasAnswerAudio(w) ? ', E читає форми й приклади' : ''}</p>`;
+  if (hasAnswerAudio(w) && cfg(w.lang).autoSpeak && cfg(w.lang).autoExamples) speakAnswer(w);
+  actions.querySelector('.grades').focus({ preventScroll: true });
+}
+
+function grade(g) {
+  const w = currentWord();
+  if (!w || !session.revealed) return;
+  const wasNew = !w.lastReview;
+  const updated = schedule(w, g);
+  db.words[db.words.findIndex(x => x.id === w.id)] = updated;
+  if (wasNew) countNewDone(w.lang);
+  logEvent(updated, 'review', g);
+  const st = session.stats;
+  st.grades[g]++;
+  if (!st.ids.has(w.id) && wasNew) st.fresh++;
+  st.ids.add(w.id);
+  session.queue.shift();
+  if (g === 0) session.queue.splice(Math.min(session.queue.length, 4), 0, w.id); // повернеться через кілька карток
+  else session.done++;
+  session.revealed = false;
+  persist();
+  if (!session.queue.length) {
+    const st = session.stats;
+    lastSummary = { lang: deck(), grades: st.grades, words: st.ids.size, fresh: st.fresh, started: st.started, ended: Date.now() };
+    session = null;
+    renderReview();
+    root.querySelector('h2')?.focus?.();
+    return;
+  }
+  renderCard(true);
+}
+
+document.addEventListener('keydown', e => {
+  if (currentView !== 'review' || !session || $('#editor').open) return;
+  if (e.target.matches('input, textarea, select')) return;
+  if ((e.key === ' ' || e.key === 'Enter') && e.target.matches('button')) return; // кнопка натиснеться сама
+  if (e.key === ' ' || e.key === 'Enter') {
+    if (!session.revealed) { e.preventDefault(); reveal(); }
+  } else if (/^[1-4]$/.test(e.key) && session.revealed) {
+    e.preventDefault(); grade(+e.key - 1);
+  } else if ((e.key === 'e' || e.key === 'E' || e.key === 'у' || e.key === 'У') && session.revealed) {
+    const w = currentWord(); if (w && hasAnswerAudio(w)) speakAnswer(w);
+  } else if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') {
+    const w = currentWord(); if (w) speak(w.word, root.querySelector('.speak'));
+  }
+});
+
+/* ---------------- Список ---------------- */
+const listEl = $('#wordList');
+function renderList() {
+  const q = $('#search').value.trim().toLowerCase();
+  const all = live().sort((a, b) => b.createdAt - a.createdAt);
+  const items = q ? all.filter(w => [w.word, w.translation, w.comment, w.transcription, formatExamples(w.examples), (w.forms || []).join(' ')].some(s => (s || '').toLowerCase().includes(q))) : all;
+  $('#listMeta').textContent = all.length === 0 ? '' : q ? `Знайдено ${nWords(items.length)} з ${all.length}` : `${langLabel(deck())}: ${nWords(all.length)}`;
+  if (!all.length) {
+    listEl.innerHTML = `<li class="empty">Тут з'являться ваші слова.<br><button class="btn primary" type="button" data-act="add">Додати слово</button></li>`;
+    return;
+  }
+  if (!items.length) {
+    listEl.innerHTML = `<li class="empty">Нічого не знайдено за запитом «${esc(q)}». Спробуйте інше слово або <button class="btn ghost small" type="button" data-act="add-q">додайте «${esc($('#search').value.trim())}»</button></li>`;
+    return;
+  }
+  listEl.innerHTML = items.map(w => {
+    const d = dueLabel(w);
+    return `<li class="word-row" data-id="${w.id}">
+      <button class="open" type="button" data-act="open">
+        <span class="row-word" lang="${esc(w.lang)}">${esc(w.word)}${w.transcription ? `<span class="ipa">${esc(w.transcription)}</span>` : ''}</span>
+        <span class="row-tr">${esc(w.translation)}</span>
+        ${w.forms?.length ? `<span class="row-forms" lang="${esc(w.lang)}">${esc(w.forms.join(', '))}</span>` : ''}
+      </button>
+      <span class="row-side">
+        <span class="due ${d.now ? 'now' : ''}">${d.text}</span>
+        <button class="icon-btn" type="button" data-act="say" aria-label="Прослухати ${esc(w.word)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        </button>
+      </span>
+    </li>`;
+  }).join('');
+}
+$('#search').addEventListener('input', renderList);
+listEl.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  if (b.dataset.act === 'add') return openEditor();
+  if (b.dataset.act === 'add-q') return openEditor(null, $('#search').value.trim());
+  const w = db.words.find(x => x.id === b.closest('[data-id]')?.dataset.id);
+  if (!w) return;
+  if (b.dataset.act === 'say') speak(w.word, b, w.lang);
+  if (b.dataset.act === 'open') openEditor(w);
+});
+
+/* ---------------- Редактор ---------------- */
+const dlg = $('#editor');
+const form = $('#editorForm');
+let editingId = null;
+
+function openEditor(w = null, prefill = '') {
+  editingId = w?.id || null;
+  $('#editorTitle').textContent = w ? 'Редагувати слово' : 'Нове слово';
+  $('#editorDeck').textContent = langLabel(w?.lang || deck());
+  $('#fWord').value = w?.word || prefill;
+  $('#fTr').value = w?.translation || '';
+  $('#fIpa').value = w?.transcription || '';
+  $('#fNote').value = w?.comment || '';
+  $('#fEx').value = formatExamples(w?.examples);
+  $('#fForms').value = (w?.forms || []).join(', ');
+  $('#formError').textContent = '';
+  $('#fDelete').hidden = !w;
+  $('#fDelete').classList.remove('confirm');
+  $('#fDelete').textContent = 'Видалити';
+  $('#fSave').textContent = w ? 'Зберегти зміни' : 'Зберегти слово';
+  $('#fLookup').hidden = (w?.lang || deck()) !== 'en';
+  hideSuggest();
+  updateExSpeak();
+  dlg.showModal();
+  setTimeout(() => (w ? $('#fTr') : $('#fWord')).focus(), 30);
+}
+$('#editorClose').addEventListener('click', () => dlg.close());
+// закриваємо лише від кліку по затемненню навколо аркуша
+let downOutside = false;
+const outside = e => { const r = dlg.getBoundingClientRect(); return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom; };
+dlg.addEventListener('pointerdown', e => { downOutside = e.target === dlg && outside(e); });
+dlg.addEventListener('click', e => { if (downOutside && e.target === dlg && outside(e)) dlg.close(); downOutside = false; });
+$('#fSpeak').addEventListener('click', e => speak($('#fWord').value.trim(), e.currentTarget, db.words.find(x => x.id === editingId)?.lang || deck()));
+
+form.addEventListener('submit', e => {
+  e.preventDefault();
+  const fields = {
+    word: $('#fWord').value.trim(),
+    translation: $('#fTr').value.trim(),
+    transcription: $('#fIpa').value.trim(),
+    comment: $('#fNote').value.trim(),
+    examples: parseExamples($('#fEx').value),
+    forms: parseForms($('#fForms').value),
+  };
+  if (!fields.word) { $('#formError').textContent = 'Впишіть слово чи фразу.'; return $('#fWord').focus(); }
+  if (!fields.translation) { $('#formError').textContent = 'Впишіть переклад, щоб було що згадувати.'; return $('#fTr').focus(); }
+  if (editingId) {
+    const i = db.words.findIndex(x => x.id === editingId);
+    db.words[i] = { ...db.words[i], ...fields, updatedAt: Date.now() };
+    toast('Зміни збережено');
+  } else {
+    const dup = live().find(x => x.word.toLowerCase() === fields.word.toLowerCase());
+    if (dup && !form.dataset.dupOk) {
+      form.dataset.dupOk = '1';
+      $('#formError').textContent = `«${dup.word}» вже є у списку: «${dup.translation}»${dup.transcription ? `, ${dup.transcription}` : ''}. Якщо це інше значення, натисніть «Зберегти слово» ще раз, і буде окрема картка.`;
+      return;
+    }
+    // додане слово вважаємо повтореним сьогодні: воно йде в ціль дня, а в черзі з'явиться завтра
+    const added = schedule(newWord(fields), 2);
+    db.words.push(added);
+    logEvent(added, 'add');
+    toast(`«${fields.word}» додано`);
+  }
+  delete form.dataset.dupOk;
+  persist();
+  dlg.close();
+  refresh();
+});
+$('#fWord').addEventListener('input', () => { delete form.dataset.dupOk; $('#formError').textContent = ''; hideSuggest(); });
+
+$('#fDelete').addEventListener('click', e => {
+  const b = e.currentTarget;
+  if (!b.classList.contains('confirm')) { b.classList.add('confirm'); b.textContent = 'Так, видалити'; return; }
+  const i = db.words.findIndex(x => x.id === editingId);
+  if (i > -1) {
+    const word = db.words[i].word;
+    db.words[i] = { id: editingId, deleted: true, updatedAt: Date.now() }; // слід для синхронізації
+    if (session) session.queue = session.queue.filter(id => id !== editingId);
+    persist();
+    toast(`«${word}» видалено`);
+  }
+  dlg.close();
+  refresh();
+});
+
+/* ---------------- Підказки в редакторі ---------------- */
+// Транскрипції: dictionaryapi.dev (лише англійська), лише після натискання «Знайти».
+// Переклад навмисно не підказуємо: машинні варіанти надто ненадійні для навчання.
+const editLang = () => db.words.find(x => x.id === editingId)?.lang || deck();
+const POS_UK = { noun: 'ім.', verb: 'дієсл.', adjective: 'прикм.', adverb: 'присл.', pronoun: 'займ.', preposition: 'прийм.', conjunction: 'спол.', interjection: 'виг.', exclamation: 'виг.', determiner: 'означ.', article: 'арт.', numeral: 'числ.' };
+const ACCENT = { us: 'амер.', uk: 'брит.', au: 'австрал.', ca: 'канад.' };
+const normIpa = t => t.replace(/[/[\]\s.ˌ]/g, '');
+
+// Додає варіант до поля через кому, якщо його там ще немає
+function addToField(input, value) {
+  const cur = input.value.trim();
+  const parts = cur ? cur.split(/\s*[,;]\s*/) : [];
+  if (parts.some(p => p.toLowerCase() === value.toLowerCase())) return;
+  input.value = cur ? `${cur}, ${value}` : value;
+}
+// groups: [{ title, idx: [номери варіантів] }] — для слів із кількома значеннями
+function renderSuggest(box, items, note, groups) {
+  box.hidden = false;
+  box._items = items;
+  const chip = i => `<button type="button" class="chip" data-i="${i}" aria-pressed="false">${items[i].html}</button>`;
+  const body = !items.length ? ''
+    : groups ? groups.map(g => `<div class="chip-group"><p class="chip-group-title">${g.title}</p><div class="chips">${g.idx.map(chip).join('')}</div></div>`).join('')
+    : `<div class="chips">${items.map((_, i) => chip(i)).join('')}</div>`;
+  box.innerHTML = body + (note ? `<p class="suggest-note">${note}</p>` : '');
+}
+function wireSuggest(box, input) {
+  box.addEventListener('click', e => {
+    const b = e.target.closest('.chip');
+    if (!b) return;
+    addToField(input, box._items[+b.dataset.i].value);
+    b.classList.add('picked');
+    b.setAttribute('aria-pressed', 'true');
+  });
+}
+wireSuggest($('#ipaSuggest'), $('#fIpa'));
+function hideSuggest() { $('#ipaSuggest').hidden = true; }
+
+$('#fLookup').addEventListener('click', async e => {
+  const word = $('#fWord').value.trim();
+  const box = $('#ipaSuggest');
+  if (!word) { $('#formError').textContent = 'Спершу впишіть слово.'; return $('#fWord').focus(); }
+  const b = e.currentTarget;
+  b.disabled = true; b.textContent = 'Шукаю…';
+  try {
+    const r = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`);
+    if (r.status === 404) return renderSuggest(box, [], `Транскрипцію для «${esc(word)}» не знайдено. Впишіть її вручну.`);
+    if (!r.ok) throw new Error('net');
+    const entries = await r.json();
+    // Кожен запис словника — окреме значення (омографи: lead /lɛd/ свинець і /liːd/ вести)
+    const pref = { 'en-gb': 'uk', 'en-us': 'us', 'en-au': 'au', 'en-ca': 'ca' }[(pickVoice('en')?.lang || 'en-US').replace('_', '-').toLowerCase()] || 'us';
+    const variants = [];
+    entries.forEach((en, ei) => {
+      const pos = [...new Set((en.meanings || []).map(m => POS_UK[m.partOfSpeech] || m.partOfSpeech))].join(', ');
+      const def = en.meanings?.[0]?.definitions?.[0]?.definition || '';
+      const phs = [...(en.phonetics || []).filter(p => p.text), ...(en.phonetic ? [{ text: en.phonetic }] : [])];
+      for (const p of phs) {
+        const acc = (p.audio || '').match(/-(us|uk|au|ca)\.mp3$/)?.[1] || '';
+        const key = normIpa(p.text);
+        const same = variants.find(v => v.key === key);
+        if (same) { if (acc && !same.acc) same.acc = acc; continue; }
+        variants.push({ key, text: p.text.trim(), acc, pos, def, ei });
+      }
+    });
+    if (!variants.length) return renderSuggest(box, [], `Транскрипцію для «${esc(word)}» не знайдено. Впишіть її вручну.`);
+    const multi = new Set(variants.map(v => v.ei)).size > 1;
+    // у межах значення: спершу вимова вашого голосу, далі без позначки, далі інші; вузька [фонетика] — в кінці
+    const rank = v => (v.acc === pref ? 0 : !v.acc ? 1 : 2) + (v.text.startsWith('[') ? 3 : 0);
+    variants.sort((a, b) => a.ei - b.ei || rank(a) - rank(b));
+    const shown = variants.slice(0, 8);
+    const items = shown.map(v => ({
+      value: v.text,
+      html: `<span class="ipa">${esc(v.text)}</span>${v.acc ? `<span class="chip-tag">${ACCENT[v.acc]}</span>` : ''}`,
+    }));
+    let groups;
+    if (multi) {
+      groups = [];
+      shown.forEach((v, i) => {
+        let g = groups.find(x => x.ei === v.ei);
+        if (!g) {
+          const def = v.def.length > 70 ? v.def.slice(0, 68).trimEnd() + '…' : v.def;
+          g = { ei: v.ei, idx: [], title: `${v.pos ? `<b>${esc(v.pos)}</b> ` : ''}<span lang="en">${esc(def)}</span>` };
+          groups.push(g);
+        }
+        g.idx.push(i);
+      });
+    }
+    const note = multi
+      ? 'У цього слова кілька значень з різною вимовою. Виберіть ту, що відповідає вашому перекладу. Для іншого значення краще окрема картка.'
+      : shown.length > 1 ? 'Натисніть варіант, щоб додати його. Можна вибрати кілька.' : '';
+    renderSuggest(box, items, note, groups);
+  } catch {
+    renderSuggest(box, [], navigator.onLine ? 'Словник не відповідає. Спробуйте ще раз або впишіть транскрипцію вручну.' : 'Немає інтернету. Впишіть транскрипцію вручну.');
+  } finally { b.disabled = false; b.textContent = 'Знайти'; }
+});
+
+// Прослухати приклади в редакторі
+function updateExSpeak() { $('#fExSpeak').hidden = !parseExamples($('#fEx').value).length; }
+$('#fEx').addEventListener('input', updateExSpeak);
+$('#fExSpeak').addEventListener('click', e => speakSeq(parseExamples($('#fEx').value).map(x => x.t), editLang(), [e.currentTarget]));
+
+function refresh() {
+  if (currentView === 'list') renderList();
+  if (currentView === 'settings') renderSettings();
+  if (currentView === 'progress') renderProgress();
+  if (currentView === 'review') {
+    if (session) { const w = currentWord(); if (w) renderCard(false); else { session = null; renderReview(); } }
+    else renderReview();
+  }
+}
+
+/* ---------------- Мови й налаштування ---------------- */
+const COMMON_LANGS = ['en', 'de', 'fr', 'es', 'it', 'pl', 'pt', 'cs', 'sk', 'nl', 'sv', 'no', 'da', 'fi', 'el', 'tr', 'he', 'ar', 'ja', 'ko', 'zh', 'hu', 'ro', 'hr', 'sr', 'bg', 'lt', 'lv', 'et', 'ka', 'hi', 'id', 'vi', 'th'];
+let langNames;
+try { langNames = new Intl.DisplayNames(['uk'], { type: 'language' }); } catch {}
+const langLabel = code => { try { const n = langNames?.of(code); return n ? n[0].toUpperCase() + n.slice(1) : code; } catch { return code; } };
+const langLabelLower = code => langLabel(code).toLowerCase();
+const byLabel = (a, b) => langLabel(a).localeCompare(langLabel(b), 'uk');
+const decks = () => Object.keys(db.settings.langs).sort(byLabel);
+
+function renderVoiceSettings() {
+  const voiceSel = $('#setVoice');
+  if (!voiceSel) return;
+  const vs = voicesFor(deck());
+  voiceSel.innerHTML = vs.length
+    ? `<option value="">Автоматично</option>` + vs.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name)}</option>`).join('')
+    : `<option value="">У цьому браузері немає голосу для цієї мови</option>`;
+  voiceSel.value = vs.some(v => v.voiceURI === cfg().voiceURI) ? cfg().voiceURI : '';
+  voiceSel.disabled = !vs.length;
+}
+/* ---------------- Готові набори ---------------- */
+const SETS = { en: [{ id: 'en-irregular', file: 'sets/en-irregular-verbs.json', name: 'Неправильні дієслова', count: 76 }] };
+const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+function renderSets() {
+  const sets = SETS[deck()] || [];
+  $('#setsPanel').hidden = !sets.length;
+  $('#setList').innerHTML = sets.map(set => {
+    const have = live().filter(w => w.set === set.id).length;
+    const all = have >= set.count;
+    return `<li class="set-row">
+      <span class="set-text"><span class="set-name">${esc(set.name)}</span>
+        <span class="set-sub">${all ? `Усі ${set.count} у вашому списку` : have ? `${have} з ${set.count} уже у списку` : `${set.count} дієслів із формами й перекладом`}</span></span>
+      <button type="button" class="btn ${all ? 'ghost' : 'primary'} small" data-set="${set.id}" ${all ? 'disabled' : ''}>${all ? 'Додано' : have ? 'Додати решту' : 'Додати'}</button>
+    </li>`;
+  }).join('');
+}
+$('#setList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-set]');
+  if (!b) return;
+  const set = (SETS[deck()] || []).find(x => x.id === b.dataset.set);
+  b.disabled = true; b.textContent = 'Додаю…';
+  try {
+    const data = await (await fetch(set.file)).json();
+    const existing = new Set(live().map(w => w.word.toLowerCase()));
+    let added = 0, skipped = 0;
+    for (const it of data.words) {
+      if (existing.has(it.w.toLowerCase())) { skipped++; continue; }
+      const id = `${set.id}-${slug(it.w)}`;
+      const w = { ...newWord({ word: it.w, translation: it.tr, transcription: '', comment: it.c || '', examples: [], forms: it.f }), id, set: set.id };
+      const i = db.words.findIndex(x => x.id === id); // раніше видалене слово з набору повертаємо на те саме місце
+      if (i > -1) db.words[i] = w; else db.words.push(w);
+      added++;
+    }
+    persist();
+    toast(added
+      ? `Додано ${nWords(added)}${skipped ? `, ${skipped} вже були у списку` : ''}. Нові з'являтимуться до ${cfg().newPerDay} на день.`
+      : 'Усі слова з набору вже є у вашому списку');
+  } catch {
+    toast(navigator.onLine ? 'Не вдалося завантажити набір. Спробуйте ще раз.' : 'Немає інтернету, а набір ще не збережено для роботи офлайн.');
+  }
+  renderSettings(); // оновлює й лічильники на скельцях мов
+});
+
+function renderSettings() {
+  const c = cfg();
+  renderDecks();
+  renderSets();
+  $('#deckNote').textContent = `Для мови «${langLabelLower(deck())}». Кожна мова має власні налаштування.`;
+  renderVoiceSettings();
+  $('#setRate').value = c.rate;
+  $('#rateOut').textContent = `${Number(c.rate).toFixed(2)}×`;
+  $('#setAuto').checked = c.autoSpeak;
+  $('#setAutoEx').checked = c.autoExamples;
+  $('#setAutoEx').disabled = !c.autoSpeak;
+  $('#setNew').value = c.newPerDay;
+  renderGoogle();
+}
+function setCfg(k, v) { const c = cfg(); c[k] = v; c.updatedAt = Date.now(); persist(); }
+$('#setVoice').addEventListener('change', e => setCfg('voiceURI', e.target.value));
+$('#setRate').addEventListener('input', e => { $('#rateOut').textContent = `${Number(e.target.value).toFixed(2)}×`; });
+$('#setRate').addEventListener('change', e => setCfg('rate', +e.target.value));
+$('#setAuto').addEventListener('change', e => { setCfg('autoSpeak', e.target.checked); $('#setAutoEx').disabled = !e.target.checked; });
+$('#setAutoEx').addEventListener('change', e => setCfg('autoExamples', e.target.checked));
+$('#setNew').addEventListener('change', e => setCfg('newPerDay', Math.max(0, Math.min(200, parseInt(e.target.value, 10) || 0))));
+const SAMPLES = { en: 'Hello, how are you?', de: 'Guten Tag, wie geht es Ihnen?', fr: 'Bonjour, comment allez-vous ?', es: 'Hola, ¿qué tal?', it: 'Ciao, come stai?', pl: 'Dzień dobry, jak się masz?', cs: 'Dobrý den, jak se máte?', pt: 'Olá, tudo bem?', ja: 'こんにちは', zh: '你好', ko: '안녕하세요', tr: 'Merhaba, nasılsın?' };
+$('#testVoice').addEventListener('click', e => speak(live()[0]?.word || SAMPLES[deck()] || 'Hello', e.currentTarget));
+
+/* ---------------- Перемикач мов (лише в налаштуваннях) ---------------- */
+// Кожна мова — скельце: назва, кількість слів, скільки чекає сьогодні.
+function renderDecks() {
+  const list = decks();
+  const grid = $('#deckGrid');
+  grid.innerHTML = list.map(l => {
+    const c = counts(l);
+    const today = c.due + c.fresh;
+    const on = l === deck();
+    return `<button type="button" class="deck-tile ${on ? 'on' : ''}" data-pick="${esc(l)}" role="radio" aria-checked="${on}">
+      <span class="deck-code" aria-hidden="true">${esc(l)}</span>
+      <span class="deck-name">${esc(langLabel(l))}</span>
+      <span class="deck-sub">${c.total ? nWords(c.total) : 'Без слів'}${today ? `<b>${today} сьогодні</b>` : ''}</span>
+    </button>`;
+  }).join('') + `<button type="button" class="deck-tile add" id="deckAddOpen" aria-expanded="${!$('#deckAdd').hidden}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <span class="deck-name">Додати мову</span>
+    </button>`;
+  const have = new Set(list);
+  const options = [...new Set([...COMMON_LANGS, ...voices.map(v => baseLang(v.lang))])]
+    .filter(l => l && l !== 'uk' && !have.has(l) && langLabel(l) !== l)
+    .sort(byLabel);
+  $('#deckAddSel').innerHTML = `<option value="">Оберіть мову</option>` + options.map(l =>
+    `<option value="${esc(l)}">${esc(langLabel(l))}${voices.length && !voicesFor(l).length ? ' (немає голосу в цьому браузері)' : ''}</option>`).join('');
+  $('#deckAddBtn').disabled = true;
+  const canRemove = list.length > 1 && counts().total === 0;
+  $('#deckRemove').hidden = !canRemove;
+  $('#deckRemove').textContent = `Прибрати мову «${langLabelLower(deck())}»`;
+}
+function switchDeck(l) {
+  if (!db.settings.langs[l] || l === deck()) return;
+  db.settings.active = l;
+  saveLocal();
+  session = null;
+  lastSummary = null;
+  $('#search').value = '';
+  renderSettings();
+  toast(`Тепер вивчаєте: ${langLabelLower(l)}`);
+}
+$('#deckGrid').addEventListener('click', e => {
+  if (e.target.closest('#deckAddOpen')) {
+    const box = $('#deckAdd');
+    box.hidden = !box.hidden;
+    e.target.closest('#deckAddOpen').setAttribute('aria-expanded', String(!box.hidden));
+    if (!box.hidden) $('#deckAddSel').focus();
+    return;
+  }
+  const pick = e.target.closest('[data-pick]')?.dataset.pick;
+  if (pick) switchDeck(pick);
+});
+// стрілки перемикають мову, як у звичайній групі перемикачів
+$('#deckGrid').addEventListener('keydown', e => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+  const tiles = [...$('#deckGrid').querySelectorAll('.deck-tile')];
+  const i = tiles.indexOf(document.activeElement);
+  if (i < 0) return;
+  e.preventDefault();
+  tiles[(i + (e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1) + tiles.length) % tiles.length].focus();
+});
+$('#deckAddSel').addEventListener('change', e => { $('#deckAddBtn').disabled = !e.target.value; });
+$('#deckAddBtn').addEventListener('click', () => {
+  const l = $('#deckAddSel').value;
+  if (!l) return;
+  db.settings.langs[l] = { ...langDefaults, updatedAt: Date.now() };
+  if (db.meta.removedLangs) delete db.meta.removedLangs[l];
+  $('#deckAdd').hidden = true;
+  persist();
+  switchDeck(l);
+});
+$('#deckRemove').addEventListener('click', () => {
+  const l = deck();
+  if (live(l).length || decks().length < 2) return;
+  delete db.settings.langs[l];
+  (db.meta.removedLangs ||= {})[l] = Date.now();
+  db.settings.active = decks()[0];
+  persist();
+  renderSettings();
+  toast(`Мову «${langLabelLower(l)}» прибрано`);
+});
+
+/* ---------------- Файл ---------------- */
+function exportData() {
+  const { clientId, active, ...settings } = db.settings;
+  return { app: 'slovnyk', version: 3, exportedAt: Date.now(), words: db.words, settings, removedLangs: db.meta.removedLangs || {}, log: db.log };
+}
+function mergeIn(remote) {
+  if (!remote || !Array.isArray(remote.words)) throw new Error('Файл не схожий на копію словника');
+  // Старі копії (одна мова на словник) і файли без мови в словах
+  const legacy = !remote.settings?.langs;
+  const fallback = legacy && remote.settings?.lang ? baseLang(remote.settings.lang) : deck();
+  const rLangs = legacy ? migrate({ settings: { ...remote.settings, lang: fallback } }).settings.langs : remote.settings.langs;
+
+  const map = new Map(db.words.map(w => [w.id, w]));
+  let added = 0;
+  for (const raw of remote.words) {
+    if (!raw?.id) continue;
+    const rw = raw.lang || raw.deleted ? raw : { ...raw, lang: fallback };
+    const lw = map.get(rw.id);
+    if (!lw || (rw.updatedAt || 0) > (lw.updatedAt || 0)) {
+      if (!lw && !rw.deleted) added++;
+      map.set(rw.id, rw);
+    }
+  }
+  db.words = [...map.values()];
+
+  // Мови: для кожної беремо новіші налаштування; прибрані на іншому пристрої — прибираємо й тут
+  const removed = { ...(db.meta.removedLangs || {}) };
+  for (const [l, t] of Object.entries(remote.removedLangs || {})) removed[l] = Math.max(t, removed[l] || 0);
+  for (const [l, rc] of Object.entries(rLangs || {})) {
+    const lc = db.settings.langs[l];
+    const newer = lc ? (rc.updatedAt || 0) > (lc.updatedAt || 0) : (rc.updatedAt || 0) >= (removed[l] || 0);
+    if (newer) db.settings.langs[l] = { ...langDefaults, ...rc };
+  }
+  for (const [l, t] of Object.entries(removed)) {
+    const lc = db.settings.langs[l];
+    if (lc && (lc.updatedAt || 0) < t && !live(l).length && Object.keys(db.settings.langs).length > 1) delete db.settings.langs[l];
+  }
+  db.meta.removedLangs = removed;
+  for (const w of db.words) if (w.lang && !w.deleted && !db.settings.langs[w.lang]) db.settings.langs[w.lang] = { ...langDefaults };
+  if (!db.settings.langs[deck()]) db.settings.active = decks()[0];
+  mergeLog(remote.log);
+  return added;
+}
+$('#exportBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(exportData(), null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `slovnyk-${dayKey(Date.now())}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$('#importFile').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const added = mergeIn(JSON.parse(await f.text()));
+    persist();
+    toast(added ? `Додано ${nWords(added)} з файлу` : 'Нових слів у файлі немає, наявні оновлено');
+    refresh();
+  } catch (err) {
+    toast(err instanceof SyntaxError ? 'Не вдалося прочитати файл: це не JSON' : err.message);
+  }
+});
+
+/* ---------------- Google Диск ---------------- */
+const G = { token: null, exp: 0, busy: false, timer: null };
+try { const t = JSON.parse(localStorage.getItem(TOKEN_KEY)); if (t && t.exp > Date.now()) Object.assign(G, t); } catch {}
+const hasToken = () => G.token && Date.now() < G.exp - 60_000;
+
+function loadGis() {
+  return new Promise((res, rej) => {
+    if (window.google?.accounts?.oauth2) return res();
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = () => res();
+    s.onerror = () => rej(new Error('Не вдалося завантажити вхід Google. Перевірте інтернет.'));
+    document.head.append(s);
+  });
+}
+async function signIn() {
+  const cid = CLIENT_ID;
+  if (!cid) throw new Error('Резервну копію в Google на цьому сайті ще не налаштовано.');
+  await loadGis();
+  return new Promise((res, rej) => {
+    const tc = google.accounts.oauth2.initTokenClient({
+      client_id: cid,
+      scope: SCOPE,
+      callback: r => {
+        if (r.error) return rej(new Error('Google не надав доступу до Диска'));
+        G.token = r.access_token;
+        G.exp = Date.now() + (r.expires_in || 3600) * 1000;
+        localStorage.setItem(TOKEN_KEY, JSON.stringify({ token: G.token, exp: G.exp }));
+        db.meta.googleLinked = true; saveLocal();
+        res(G.token);
+      },
+      error_callback: err => rej(new Error(err?.type === 'popup_closed' ? 'Вікно входу Google закрито' : err?.type === 'popup_failed_to_open' ? 'Браузер заблокував вікно входу. Дозвольте спливні вікна для цього сайту.' : 'Вхід у Google не вдався')),
+    });
+    tc.requestAccessToken({ prompt: db.meta.googleLinked ? '' : 'consent' });
+  });
+}
+async function gfetch(url, opts = {}) {
+  if (!hasToken()) { const e = new Error('auth'); e.auth = true; throw e; }
+  const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${G.token}` } });
+  if (r.status === 401) { G.token = null; localStorage.removeItem(TOKEN_KEY); const e = new Error('auth'); e.auth = true; throw e; }
+  if (!r.ok) throw new Error(`Google Диск відповів помилкою ${r.status}`);
+  return r;
+}
+async function sync() {
+  if (G.busy) return;
+  G.busy = true;
+  setSync('busy');
+  try {
+    const q = encodeURIComponent(`name='${BACKUP_NAME}'`);
+    const list = await (await gfetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,modifiedTime)`)).json();
+    const file = list.files?.[0];
+    let added = 0;
+    if (file) {
+      const remote = await (await gfetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`)).json();
+      added = mergeIn(remote);
+    }
+    const body = JSON.stringify(exportData());
+    if (file) {
+      await gfetch(`https://www.googleapis.com/upload/drive/v3/files/${file.id}?uploadType=media`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body });
+    } else {
+      const fd = new FormData();
+      fd.append('metadata', new Blob([JSON.stringify({ name: BACKUP_NAME, parents: ['appDataFolder'] })], { type: 'application/json' }));
+      fd.append('file', new Blob([body], { type: 'application/json' }));
+      await gfetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', body: fd });
+    }
+    db.meta.lastSync = Date.now();
+    db.meta.dirty = false;
+    saveLocal();
+    setSync('ok');
+    if (added) { toast(`З Google отримано ${nWords(added)}`); refresh(); }
+    return true;
+  } catch (e) {
+    if (e.auth) setSync('auth');
+    else { setSync('err', e.message); }
+    throw e;
+  } finally { G.busy = false; renderGoogle(); }
+}
+function scheduleBackup() {
+  db.meta.dirty = true;
+  saveLocal();
+  clearTimeout(G.timer);
+  if (!db.meta.googleLinked) return;
+  if (!hasToken()) return setSync('auth');
+  G.timer = setTimeout(() => sync().catch(() => {}), 3000);
+}
+
+const syncText = $('#syncText'), chip = $('#syncChip');
+const hm = t => new Date(t).toLocaleTimeString('uk', { hour: '2-digit', minute: '2-digit' });
+function setSync(state, msg) {
+  chip.dataset.state = state;
+  syncText.textContent = {
+    off: 'Google не підключено',
+    busy: 'Зберігаю в Google…',
+    ok: db.meta.lastSync ? `Збережено в Google о ${hm(db.meta.lastSync)}` : 'Google підключено',
+    auth: 'Увійдіть у Google, щоб зберегти',
+    err: 'Не вдалося зберегти в Google',
+  }[state];
+  chip.title = msg || '';
+}
+function initialSyncState() {
+  chip.hidden = !CLIENT_ID; // без налаштованого Google значок угорі не потрібен
+  if (!db.meta.googleLinked) return setSync('off');
+  if (!hasToken()) return setSync(db.meta.dirty ? 'auth' : 'ok');
+  setSync('ok');
+}
+function renderGoogle() {
+  const linked = db.meta.googleLinked;
+  $('#gConnect').hidden = linked && hasToken();
+  $('#gConnect').disabled = !CLIENT_ID;
+  $('#gSync').hidden = !linked;
+  $('#gDisconnect').hidden = !linked;
+  const status = $('#gStatus');
+  if (!CLIENT_ID) status.textContent = 'На цьому сайті резервну копію в Google ще не налаштовано. Поки що зберігайте копію у файл.';
+  else if (!linked) status.textContent = 'Увійдіть, і копія словника зберігатиметься на вашому Google Диску. Її можна відновити на будь-якому пристрої.';
+  else status.textContent = db.meta.lastSync
+    ? `Остання синхронізація: ${new Date(db.meta.lastSync).toLocaleString('uk', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}. Після кожної зміни копія оновлюється сама, поки ви увійшли в Google.`
+    : 'Google підключено. Перша синхронізація ще не відбулася.';
+}
+async function connectAndSync() {
+  try {
+    if (!hasToken()) await signIn();
+    await sync();
+    toast('Словник збережено в Google');
+  } catch (e) {
+    if (!e.auth) toast(e.message);
+  }
+  renderGoogle();
+}
+$('#gConnect').addEventListener('click', connectAndSync);
+$('#gSync').addEventListener('click', connectAndSync);
+chip.addEventListener('click', () => {
+  if (chip.dataset.state === 'auth' || chip.dataset.state === 'err') return connectAndSync();
+  go('settings');
+});
+$('#gDisconnect').addEventListener('click', () => {
+  if (G.token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(G.token, () => {});
+  G.token = null; G.exp = 0;
+  localStorage.removeItem(TOKEN_KEY);
+  db.meta.googleLinked = false; saveLocal();
+  setSync('off'); renderGoogle();
+  toast('Google відключено. Копія на Диску залишилася.');
+});
+
+/* ---------------- Ціль дня й прогрес (окремо для кожної мови) ---------------- */
+// День зараховується, якщо повторено щонайменше goal різних слів.
+// Додане цього дня слово рахується як повторене.
+const goalOf = (l = deck()) => cfg(l).goal || 10;
+const langLog = (l = deck()) => (db.log[l] ||= {});
+const fromKey = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+const keyOfDate = d => dayKey(d.getTime());
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const mondayOf = d => addDays(d, -((d.getDay() + 6) % 7));
+const todayDate = () => fromKey(dayKey(Date.now()));
+
+function logEvent(w, kind, g) {
+  const day = dayKey(Date.now());
+  const before = dayCount(day, w.lang);
+  const d = (langLog(w.lang)[day] ||= { goal: goalOf(w.lang), w: {} });
+  d.goal = goalOf(w.lang);
+  const e = (d.w[w.id] ||= { g: [], a: 0 });
+  if (kind === 'add') e.a = 1; else e.g.push(g);
+  const after = dayCount(day, w.lang);
+  if (before < d.goal && after >= d.goal) setTimeout(() => toast(`Ціль на сьогодні досягнуто: ${nWords(after)}`), 400);
+}
+function mergeLog(remote) {
+  if (!remote || typeof remote !== 'object') return;
+  for (const [l, days] of Object.entries(remote)) {
+    if (!days || typeof days !== 'object') continue;
+    const mine = langLog(l);
+    for (const [day, rd] of Object.entries(days)) {
+      const ld = mine[day];
+      if (!ld) { mine[day] = rd; continue; }
+      ld.goal = ld.goal ?? rd.goal;
+      for (const [id, re] of Object.entries(rd.w || {})) {
+        const le = ld.w[id];
+        if (!le) { ld.w[id] = re; continue; }
+        le.a = Math.max(le.a || 0, re.a || 0);
+        if ((re.g || []).length > (le.g || []).length) le.g = re.g;
+      }
+    }
+  }
+}
+function dayCount(day, l = deck()) { const d = db.log[l]?.[day]; return d ? Object.keys(d.w).length : 0; }
+function dayGoal(day, l = deck()) { return db.log[l]?.[day]?.goal ?? goalOf(l); }
+function dayStatus(day, l = deck()) {
+  const n = dayCount(day, l);
+  return n === 0 ? 'none' : n >= dayGoal(day, l) ? 'done' : 'try';
+}
+const STATUS_TEXT = { done: 'ціль досягнуто', try: 'спроба', none: 'без повторень' };
+
+function setGoal(n) {
+  const v = Math.max(1, Math.min(500, Math.round(n) || 1));
+  setCfg('goal', v);
+  const today = langLog()[dayKey(Date.now())];
+  if (today) today.goal = v; // минулі дні зберігають ціль, яка діяла тоді
+  renderProgress();
+}
+
+function firstDay(l = deck()) {
+  const keys = Object.keys(db.log[l] || {}).filter(k => dayCount(k, l) > 0).sort();
+  return keys.length ? fromKey(keys[0]) : todayDate();
+}
+// Підсумок діапазону дат [from, to], обрізаного сьогоднішнім днем
+function rangeStats(from, to) {
+  const t = todayDate();
+  const end = to > t ? t : to;
+  const f = firstDay();
+  const start = from < f ? f : from; // дні до початку навчання не рахуємо
+  let done = 0, tried = 0, words = 0, days = 0;
+  for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+    const k = keyOfDate(d);
+    const st = dayStatus(k);
+    days++;
+    words += dayCount(k);
+    if (st === 'done') done++; else if (st === 'try') tried++;
+  }
+  return { done, tried, words, days: Math.max(days, 0) };
+}
+function periodRange(kind, offset = 0) {
+  const t = todayDate();
+  if (kind === 'week') { const from = addDays(mondayOf(t), offset * 7); return { from, to: addDays(from, 6) }; }
+  if (kind === 'month') { const from = new Date(t.getFullYear(), t.getMonth() + offset, 1); return { from, to: new Date(from.getFullYear(), from.getMonth() + 1, 0) }; }
+  if (kind === 'year') { const y = t.getFullYear() + offset; return { from: new Date(y, 0, 1), to: new Date(y, 11, 31) }; }
+  return { from: firstDay(), to: t };
+}
+const nDays = n => `${n} ${plural(n, ['день', 'дні', 'днів'])}`;
+const fmtDay = (d, opts = { day: 'numeric', month: 'long' }) => d.toLocaleDateString('uk', opts);
+const MONTHS_SHORT = ['січ', 'лют', 'бер', 'кві', 'тра', 'чер', 'лип', 'сер', 'вер', 'жов', 'лис', 'гру'];
+const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
+
+let calMonth = null;     // перше число місяця в календарі
+let selectedDay = null;  // ключ вибраного дня
+
+function renderProgress() {
+  const today = dayKey(Date.now());
+  if (!selectedDay) selectedDay = today;
+  if (!calMonth) { const t = todayDate(); calMonth = new Date(t.getFullYear(), t.getMonth(), 1); }
+  renderToday();
+  renderPeriods();
+  renderCalendar();
+  renderDay();
+}
+
+// Один ряд скелець на всю ширину. Понад 20 вони стали б крихтами — тоді суцільна смужка.
+function pebblesHtml(n, goal) {
+  return goal <= 20
+    ? `<div class="pebbles ${goal > 12 ? 'tight' : ''}" aria-hidden="true">${Array.from({ length: goal }, (_, i) =>
+        `<i class="${i < n ? 'on' : i === n ? 'next' : ''}"></i>`).join('')}${n > goal ? `<span class="extra">+${n - goal}</span>` : ''}</div>`
+    : `<div class="goal-bar" aria-hidden="true"><i style="width:${Math.min(100, (n / goal) * 100)}%"></i></div>`;
+}
+function renderToday() {
+  const today = dayKey(Date.now());
+  const n = dayCount(today), goal = goalOf();
+  const done = n >= goal;
+  const head = done
+    ? `Ціль на сьогодні досягнуто: ${nWords(n)}`
+    : n === 0 ? `Сьогодні ще жодного слова з ${goal}` : `Сьогодні ${n} з ${goal} ${plural(goal, ['слова', 'слів', 'слів'])}`;
+  const left = goal - n;
+  const sub = done
+    ? (n > goal ? `На ${n - goal} більше, ніж ціль. Мова: ${langLabelLower(deck())}.` : `Мова: ${langLabelLower(deck())}.`)
+    : `Залишилось ${nWords(left)}. Рахуються повторені й додані сьогодні слова мови «${langLabelLower(deck())}».`;
+  const pebbles = pebblesHtml(n, goal);
+  $('#todayCard').innerHTML = `
+    <h2>${head}</h2>
+    <p>${sub}</p>
+    <div role="progressbar" aria-label="Ціль дня" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${Math.min(n, goal)}">${pebbles}</div>
+    <div class="goal-row">
+      <span id="goalLabel">Ціль на день</span>
+      <div class="stepper" role="group" aria-labelledby="goalLabel">
+        <button type="button" class="icon-btn" data-goal="-1" aria-label="Зменшити ціль"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>
+        <input id="goalInput" type="number" inputmode="numeric" min="1" max="500" value="${goal}" aria-label="Слів на день">
+        <button type="button" class="icon-btn" data-goal="1" aria-label="Збільшити ціль"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg></button>
+      </div>
+    </div>`;
+}
+$('#todayCard').addEventListener('click', e => {
+  const b = e.target.closest('[data-goal]');
+  if (b) setGoal(goalOf() + Number(b.dataset.goal));
+});
+// колесо миші над полем числа не повинно непомітно змінювати ціль
+$('#todayCard').addEventListener('wheel', e => { if (e.target.id === 'goalInput') e.target.blur(); }, { passive: true });
+$('#todayCard').addEventListener('change', e => { if (e.target.id === 'goalInput') setGoal(parseInt(e.target.value, 10)); });
+
+function renderPeriods() {
+  const tiles = [
+    ['week', 'Цей тиждень'],
+    ['month', fmtDay(todayDate(), { month: 'long' }).replace(/^./, c => c.toUpperCase())],
+    ['year', `${todayDate().getFullYear()} рік`],
+    ['all', 'Увесь час'],
+  ];
+  $('#periodGrid').innerHTML = tiles.map(([kind, name]) => {
+    const { from, to } = periodRange(kind);
+    const st = rangeStats(from, to);
+    return `<button type="button" class="period" data-period="${kind}" aria-label="${name}: ціль досягнуто ${nDays(st.done)} з ${st.days}. Відкрити діаграму">
+      <span class="period-name">${name}</span>
+      <span class="period-num">${st.done}</span>
+      <span class="period-sub">${plural(st.done, ['день', 'дні', 'днів'])} з ${st.days}</span>
+    </button>`;
+  }).join('');
+}
+$('#periodGrid').addEventListener('click', e => {
+  const b = e.target.closest('[data-period]');
+  if (b) openChart(b.dataset.period, 0);
+});
+
+/* ---- Календар ---- */
+function renderCalendar() {
+  const t = todayDate();
+  const y = calMonth.getFullYear(), m = calMonth.getMonth();
+  const title = calMonth.toLocaleDateString('uk', { month: 'long', year: 'numeric' }).replace(' р.', '');
+  $('#calTitle').textContent = title[0].toUpperCase() + title.slice(1);
+  $('#calNext').disabled = y === t.getFullYear() && m === t.getMonth();
+  const f = firstDay();
+  $('#calPrev').disabled = calMonth <= new Date(f.getFullYear(), f.getMonth(), 1);
+  const lead = (calMonth.getDay() + 6) % 7;
+  const daysIn = new Date(y, m + 1, 0).getDate();
+  const todayKey = keyOfDate(t);
+  let html = WEEKDAYS.map(w => `<span class="cal-wd" aria-hidden="true">${w}</span>`).join('');
+  html += Array.from({ length: lead }, () => '<span class="cal-pad" aria-hidden="true"></span>').join('');
+  for (let d = 1; d <= daysIn; d++) {
+    const date = new Date(y, m, d);
+    const k = keyOfDate(date);
+    const future = date > t;
+    const st = future ? 'future' : dayStatus(k);
+    const n = dayCount(k);
+    const label = `${fmtDay(date)}: ${future ? 'ще не настав' : `${nWords(n)}, ${STATUS_TEXT[st]}`}`;
+    html += `<button type="button" class="cal-day ${st} ${k === todayKey ? 'today' : ''} ${k === selectedDay ? 'sel' : ''}" data-day="${k}" ${future ? 'disabled' : ''} aria-label="${label}" ${k === selectedDay ? 'aria-pressed="true"' : 'aria-pressed="false"'}>${d}</button>`;
+  }
+  $('#calGrid').innerHTML = html;
+}
+$('#calPrev').addEventListener('click', () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); renderCalendar(); });
+$('#calNext').addEventListener('click', () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); renderCalendar(); });
+$('#calGrid').addEventListener('click', e => {
+  const b = e.target.closest('[data-day]');
+  if (!b) return;
+  selectedDay = b.dataset.day;
+  renderCalendar();
+  renderDay();
+  if (matchMedia('(max-width: 700px)').matches) $('#dayPanel').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
+});
+
+/* ---- Статистика дня ---- */
+function renderDay() {
+  const k = selectedDay;
+  const date = fromKey(k);
+  const isToday = k === dayKey(Date.now());
+  const d = langLog()[k];
+  const entries = d ? Object.entries(d.w) : [];
+  const n = entries.length, goal = dayGoal(k), st = dayStatus(k);
+  const weekday = date.toLocaleDateString('uk', { weekday: 'long' });
+  const title = `${isToday ? 'Сьогодні' : weekday[0].toUpperCase() + weekday.slice(1)}, ${fmtDay(date)}`;
+  let body;
+  if (!n) {
+    body = `<p class="day-line">${isToday ? 'Сьогодні ще не було повторень.' : 'Цього дня повторень не було.'}</p>`;
+  } else {
+    const added = entries.filter(([, e]) => e.a).length;
+    const reviewed = n - added;
+    const grades = [0, 0, 0, 0];
+    for (const [, e] of entries) for (const g of e.g || []) grades[g]++;
+    const names = ['Знову', 'Важко', 'Добре', 'Легко'];
+    const byId = new Map(db.words.map(w => [w.id, w]));
+    const items = entries
+      .map(([id, e]) => ({ w: byId.get(id), e }))
+      .sort((a, b) => (b.e.a || 0) - (a.e.a || 0));
+    const shown = items.slice(0, 12);
+    body = `
+      <p class="day-line"><span class="st-mark ${st}" aria-hidden="true"></span>${nWords(n)} при цілі ${goal}: ${STATUS_TEXT[st]}.</p>
+      <div class="tally">
+        <span>Повторено <b>${reviewed}</b></span>
+        <span>Додано нових <b>${added}</b></span>
+        ${grades.map((c, i) => c ? `<span class="g${i}">${names[i]} <b>${c}</b></span>` : '').join('')}
+      </div>
+      <ul class="day-words">${shown.map(({ w, e }) => `<li>
+        <span class="dw-word" lang="${esc(deck())}">${w && !w.deleted ? esc(w.word) : 'Видалене слово'}</span>
+        <span class="dw-tr">${w && !w.deleted ? esc(w.translation) : ''}</span>
+        ${e.a ? '<span class="dw-tag">нове</span>' : ''}
+      </li>`).join('')}</ul>
+      ${items.length > shown.length ? `<p class="muted">І ще ${nWords(items.length - shown.length)}.</p>` : ''}`;
+  }
+  $('#dayPanel').innerHTML = `<h2>${title}</h2>${body}`;
+}
+
+/* ---- Діаграми за період ---- */
+const chartDlg = $('#chartDlg');
+let chartState = { kind: 'week', offset: 0 };
+
+function chartData(kind, offset) {
+  const t = todayDate();
+  const { from, to } = periodRange(kind, offset);
+  const bars = [];
+  if (kind === 'week' || kind === 'month') {
+    for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
+      const k = keyOfDate(d);
+      const future = d > t;
+      const n = future ? 0 : dayCount(k);
+      const st = future ? 'future' : dayStatus(k);
+      bars.push({
+        key: k, value: n, status: st,
+        label: kind === 'week' ? WEEKDAYS[(d.getDay() + 6) % 7] : String(d.getDate()),
+        showLabel: kind === 'week' || d.getDate() === 1 || d.getDate() % 5 === 0,
+        info: future ? `${fmtDay(d, { weekday: 'short', day: 'numeric', month: 'long' })}: ще не настав` : `${fmtDay(d, { weekday: 'short', day: 'numeric', month: 'long' })}: ${nWords(n)} при цілі ${dayGoal(k)}, ${STATUS_TEXT[st]}`,
+      });
+    }
+    return { bars, unit: 'words', goal: goalOf(), from, to };
+  }
+  // рік і весь час: стовпчик = місяць, висота = днів із досягнутою ціллю
+  const months = [];
+  if (kind === 'year') for (let m = 0; m < 12; m++) months.push(new Date(from.getFullYear(), m, 1));
+  else for (let d = new Date(from.getFullYear(), from.getMonth(), 1); d <= t; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) months.push(d);
+  for (const ms of months) {
+    const me = new Date(ms.getFullYear(), ms.getMonth() + 1, 0);
+    const future = ms > t;
+    const s = future ? { done: 0, words: 0, days: 0 } : rangeStats(ms, me);
+    const monthName = ms.toLocaleDateString('uk', { month: 'long', year: kind === 'all' ? 'numeric' : undefined });
+    bars.push({
+      key: keyOfDate(ms), value: s.done, status: future ? 'future' : s.done ? 'done' : 'none',
+      max: me.getDate(),
+      label: MONTHS_SHORT[ms.getMonth()] + (kind === 'all' && ms.getMonth() === 0 ? ` ${ms.getFullYear()}` : ''),
+      showLabel: kind === 'year' || months.length <= 12 || ms.getMonth() % 3 === 0,
+      info: future ? `${monthName}: ще не настав` : `${monthName}: ціль досягнуто ${nDays(s.done)} з ${s.days}, ${nWords(s.words)}`,
+    });
+  }
+  return { bars, unit: 'days', from, to };
+}
+
+function chartTitle(kind, offset, from, to) {
+  if (kind === 'week') return offset === 0 ? 'Цей тиждень' : offset === -1 ? 'Минулий тиждень' : `${fmtDay(from)} – ${fmtDay(to)}`;
+  if (kind === 'month') { const s = from.toLocaleDateString('uk', { month: 'long', year: 'numeric' }).replace(' р.', ''); return s[0].toUpperCase() + s.slice(1); }
+  if (kind === 'year') return `${from.getFullYear()} рік`;
+  return 'Увесь час';
+}
+
+function renderChart() {
+  const { kind, offset } = chartState;
+  const data = chartData(kind, offset);
+  const { from, to } = data;
+  const st = rangeStats(from, to > todayDate() ? todayDate() : to);
+  $('#chartTitle').textContent = chartTitle(kind, offset, from, to);
+  $('#chartPrev').hidden = kind === 'all';
+  $('#chartNext').hidden = kind === 'all';
+  $('#chartPrev').disabled = from <= firstDay();
+  $('#chartNext').disabled = offset >= 0;
+  const avg = st.days ? Math.round(st.words / st.days) : 0;
+  $('#chartSummary').textContent = st.days
+    ? `Ціль досягнуто ${nDays(st.done)} з ${st.days}${st.tried ? `, у ${nDays(st.tried)} була спроба` : ''}. Повторено ${nWords(st.words)}, у середньому ${avg} на день.`
+    : to < firstDay() ? 'У цей період ви ще не вчили цю мову.' : 'Цей період ще не настав.';
+
+  let yMax, goalLine = null, yLabel;
+  if (data.unit === 'words') {
+    const peak = Math.max(data.goal, ...data.bars.map(b => b.value));
+    yMax = Math.ceil(peak * 1.15) || 1;
+    goalLine = data.goal;
+    yLabel = 'слів за день';
+  } else {
+    yMax = 31;
+    yLabel = 'днів із досягнутою ціллю';
+  }
+  const pct = v => `${Math.max(0, Math.min(100, (v / yMax) * 100))}%`;
+  const many = data.bars.length > 14;
+  $('#chartBody').innerHTML = `
+    <div class="chart ${many ? 'dense' : ''}">
+      <div class="chart-y" aria-hidden="true"><span style="bottom:100%">${yMax}</span><span style="bottom:0">0</span></div>
+      <div class="chart-plot">
+        ${goalLine ? `<div class="goal-line" style="bottom:${pct(goalLine)}"><span>ціль ${goalLine}</span></div>` : ''}
+        ${data.bars.map((b, i) => `<button type="button" class="bar ${b.status}" data-i="${i}" aria-label="${esc(b.info)}">
+          <i style="height:${b.value ? pct(b.value) : '0%'}"></i>
+        </button>`).join('')}
+      </div>
+      <div class="chart-x" aria-hidden="true">${data.bars.map(b => `<span>${b.showLabel ? esc(b.label) : ''}</span>`).join('')}</div>
+    </div>
+    <p class="chart-axis-note">По вертикалі: ${yLabel}</p>
+    <p class="chart-info" id="chartInfo" aria-live="polite">Наведіть або торкніться стовпчика, щоб побачити деталі.</p>`;
+  chartDlg._bars = data.bars;
+  chartDlg._kind = kind;
+}
+function showBarInfo(i) {
+  const b = chartDlg._bars?.[i];
+  if (!b) return;
+  const canOpen = (chartDlg._kind === 'week' || chartDlg._kind === 'month') && b.status !== 'future';
+  $('#chartInfo').innerHTML = `${esc(b.info)}${canOpen ? ` <button type="button" class="link-inline" data-open-day="${b.key}">Відкрити день</button>` : ''}`;
+  $('#chartBody').querySelectorAll('.bar').forEach((el, j) => el.classList.toggle('hot', j === i));
+}
+$('#chartBody').addEventListener('pointerover', e => { const b = e.target.closest('.bar'); if (b) showBarInfo(+b.dataset.i); });
+$('#chartBody').addEventListener('focusin', e => { const b = e.target.closest('.bar'); if (b) showBarInfo(+b.dataset.i); });
+$('#chartBody').addEventListener('click', e => {
+  const open = e.target.closest('[data-open-day]');
+  if (open) {
+    selectedDay = open.dataset.openDay;
+    const d = fromKey(selectedDay);
+    calMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+    chartDlg.close();
+    renderCalendar(); renderDay();
+    $('#dayPanel').scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  const b = e.target.closest('.bar');
+  if (b) showBarInfo(+b.dataset.i);
+});
+function openChart(kind, offset) {
+  chartState = { kind, offset };
+  renderChart();
+  chartDlg.showModal();
+  $('#chartTitle').focus();
+}
+$('#chartPrev').addEventListener('click', () => { chartState.offset--; renderChart(); });
+$('#chartNext').addEventListener('click', () => { if (chartState.offset < 0) { chartState.offset++; renderChart(); } });
+$('#chartClose').addEventListener('click', () => chartDlg.close());
+chartDlg.addEventListener('click', e => { if (e.target === chartDlg) chartDlg.close(); });
+
+/* ---------------- Дрібниці ---------------- */
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+// Інша вкладка зберегла зміни: беремо їх, щоб вкладки не затирали одна одну
+window.addEventListener('storage', e => {
+  if (e.key !== KEY || !e.newValue) return;
+  const fresh = load();
+  db.words = fresh.words; db.settings = fresh.settings; db.meta = fresh.meta; db.log = fresh.log;
+  if (session) session.queue = session.queue.filter(id => db.words.some(w => w.id === id && !w.deleted && w.lang === deck()));
+  refresh();
+});
+
+// Повернулися до вкладки — підтягнути зміни з інших пристроїв
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && db.meta.googleLinked && hasToken() && Date.now() - (db.meta.lastSync || 0) > 5 * MIN) sync().catch(() => {});
+});
+
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+
+if (synth) { loadVoices(); synth.addEventListener?.('voiceschanged', loadVoices); }
+initialSyncState();
+go('review');
+if (db.meta.googleLinked && hasToken()) sync().catch(() => {});

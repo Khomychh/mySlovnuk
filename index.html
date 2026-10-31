@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Словник</title>
+  <meta name="description" content="Особистий словник для вивчення мови з інтервальним повторенням.">
+  <meta name="theme-color" content="#DDE6E1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E2C2D" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Gentium+Book+Plus&family=Onest:wght@400;500;600&family=Roboto:wght@500&family=Unbounded:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="sea" aria-hidden="true">
+    <span class="pebble p1"></span><span class="pebble p2"></span><span class="pebble p3"></span><span class="pebble p4"></span>
+  </div>
+
+  <header class="topbar">
+    <h1 class="brand">Словник</h1>
+    <button class="sync-chip" id="syncChip" type="button" data-state="off">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.2 9.1 4.5 4.5 0 0 0 7 18Z"/></svg>
+      <span id="syncText">Google не підключено</span>
+    </button>
+  </header>
+
+  <main>
+    <!-- Повторення -->
+    <section class="view" id="view-review" data-view="review" aria-label="Повторення">
+      <div id="reviewRoot"></div>
+    </section>
+
+    <!-- Список слів -->
+    <section class="view" id="view-list" data-view="list" hidden aria-label="Мої слова">
+      <div class="search glass">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+        <input id="search" type="search" placeholder="Пошук слова, перекладу чи коментаря" autocomplete="off" aria-label="Пошук">
+      </div>
+      <p class="list-meta" id="listMeta"></p>
+      <ul class="word-list" id="wordList"></ul>
+    </section>
+
+    <!-- Прогрес -->
+    <section class="view" id="view-progress" data-view="progress" hidden aria-label="Прогрес">
+      <div class="today glass" id="todayCard"></div>
+      <div class="period-grid" id="periodGrid"></div>
+      <div class="panel glass cal">
+        <div class="cal-head">
+          <button type="button" class="icon-btn" id="calPrev" aria-label="Попередній місяць"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 6-6 6 6 6"/></svg></button>
+          <h2 id="calTitle"></h2>
+          <button type="button" class="icon-btn" id="calNext" aria-label="Наступний місяць"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg></button>
+        </div>
+        <div class="cal-grid" id="calGrid"></div>
+        <div class="legend">
+          <span><i class="st-mark done"></i>Ціль досягнуто</span>
+          <span><i class="st-mark try"></i>Спроба</span>
+          <span><i class="st-mark none"></i>Без повторень</span>
+        </div>
+      </div>
+      <div class="panel glass day-panel" id="dayPanel" aria-live="polite"></div>
+    </section>
+
+    <!-- Налаштування -->
+    <section class="view" id="view-settings" data-view="settings" hidden aria-label="Налаштування">
+      <div class="panel glass deck-panel">
+        <h2 id="deckHeading">Мова, яку вивчаю</h2>
+        <p class="muted">У кожної мови свої слова й повторення.</p>
+        <div class="deck-grid" id="deckGrid" role="radiogroup" aria-labelledby="deckHeading"></div>
+        <div class="deck-add" id="deckAdd" hidden>
+          <select id="deckAddSel" aria-label="Нова мова"></select>
+          <button class="btn primary" type="button" id="deckAddBtn" disabled>Додати</button>
+        </div>
+        <button class="link-btn" type="button" id="deckRemove" hidden></button>
+      </div>
+
+      <div class="panel glass">
+        <h2>Озвучення й навчання</h2>
+        <p class="muted" id="deckNote"></p>
+        <label class="field">
+          <span>Голос</span>
+          <select id="setVoice"></select>
+        </label>
+        <label class="field">
+          <span>Швидкість мовлення <output id="rateOut"></output></span>
+          <input id="setRate" type="range" min="0.5" max="1.3" step="0.05">
+        </label>
+        <label class="switch">
+          <input id="setAuto" type="checkbox">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span>Вимовляти слово, щойно з'являється картка</span>
+        </label>
+        <label class="switch">
+          <input id="setAutoEx" type="checkbox">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span>Читати форми й приклади, коли відкривається переклад</span>
+        </label>
+        <label class="field">
+          <span>Нових слів на день</span>
+          <input id="setNew" type="number" min="0" max="200" inputmode="numeric">
+        </label>
+        <button class="btn ghost" type="button" id="testVoice">Прослухати голос</button>
+      </div>
+
+      <div class="panel glass">
+        <h2>Резервна копія в Google</h2>
+        <p class="muted" id="gStatus">Словник зберігається в прихованій папці вашого Google Диска. Інші файли застосунок не бачить.</p>
+        <div class="row-btns">
+          <!-- Кнопка за правилами оформлення Google Sign-In -->
+          <button class="gsi-btn" type="button" id="gConnect">
+            <svg class="gsi-logo" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            </svg>
+            <span>Увійти через Google</span>
+          </button>
+          <button class="btn ghost" type="button" id="gSync" hidden>Синхронізувати зараз</button>
+          <button class="btn ghost" type="button" id="gDisconnect" hidden>Відключити</button>
+        </div>
+        <p class="fine-print">Застосунок бачить лише власний файл копії на вашому Диску. <a href="privacy.html">Політика конфіденційності</a></p>
+      </div>
+
+      <div class="panel glass" id="setsPanel" hidden>
+        <h2>Готові набори</h2>
+        <p class="muted">Слова з набору додаються як нові й з'являтимуться в повторенні поступово, в межах денного ліміту нових слів.</p>
+        <ul class="sets" id="setList"></ul>
+      </div>
+
+      <div class="panel glass">
+        <h2>Файл</h2>
+        <p class="muted">Збережіть копію словника на пристрій або додайте слова з файлу. Слова з файлу об'єднаються з наявними.</p>
+        <div class="row-btns">
+          <button class="btn ghost" type="button" id="exportBtn">Завантажити копію</button>
+          <label class="btn ghost file-btn">Відкрити файл<input id="importFile" type="file" accept="application/json,.json"></label>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="dock glass" aria-label="Розділи">
+    <button type="button" data-go="review" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="13" height="15" rx="3"/><path d="M8 3h9a3 3 0 0 1 3 3v11"/></svg>
+      <span>Повторення</span>
+    </button>
+    <button type="button" data-go="list">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h9"/></svg>
+      <span>Слова</span>
+    </button>
+    <button type="button" class="dock-add" id="addBtn" aria-label="Додати слово">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button type="button" data-go="progress">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/><path d="m9 15 2 2 4-4"/></svg>
+      <span>Прогрес</span>
+    </button>
+    <button type="button" data-go="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/></svg>
+      <span>Параметри</span>
+    </button>
+  </nav>
+
+  <!-- Редактор слова -->
+  <dialog id="editor" class="sheet glass" aria-labelledby="editorTitle">
+    <form id="editorForm" method="dialog" novalidate>
+      <div class="sheet-head">
+        <div>
+          <h2 id="editorTitle">Нове слово</h2>
+          <p class="sheet-sub" id="editorDeck"></p>
+        </div>
+        <button type="button" class="icon-btn" id="editorClose" aria-label="Закрити">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <label class="field">
+        <span>Слово чи фраза</span>
+        <div class="with-action">
+          <input name="word" id="fWord" required autocomplete="off" spellcheck="false">
+          <button type="button" class="icon-btn" id="fSpeak" aria-label="Прослухати">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+          </button>
+        </div>
+      </label>
+      <label class="field">
+        <span>Переклад</span>
+        <input name="translation" id="fTr" required autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Транскрипція</span>
+        <div class="with-action">
+          <input name="transcription" id="fIpa" class="ipa" autocomplete="off" spellcheck="false" placeholder="/ˈwɜːd/">
+          <button type="button" class="btn ghost small" id="fLookup" hidden>Знайти</button>
+        </div>
+      </label>
+      <div class="suggest" id="ipaSuggest" hidden></div>
+      <div class="field">
+        <label for="fForms" class="field-label">Форми</label>
+        <input name="forms" id="fForms" autocomplete="off" spellcheck="false" placeholder="went, gone" aria-describedby="fFormsHint">
+        <span class="field-hint" id="fFormsHint">Для неправильних дієслів, множини тощо. Через кому, без самого слова.</span>
+      </div>
+      <div class="field">
+        <span class="field-head"><label for="fEx">Приклади</label>
+          <button type="button" class="link-inline" id="fExSpeak" hidden>Прослухати</button>
+        </span>
+        <textarea name="examples" id="fEx" rows="3" spellcheck="false" placeholder="I love you | Я люблю тебе" aria-describedby="fExHint"></textarea>
+        <span class="field-hint" id="fExHint">Кожен приклад з нового рядка. Переклад після |, його можна не писати.</span>
+      </div>
+      <div class="field">
+        <label for="fNote" class="field-label">Коментар</label>
+        <textarea name="comment" id="fNote" rows="2" placeholder="Асоціація, де почули, з чим не плутати"></textarea>
+      </div>
+      <p class="form-error" id="formError" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="btn danger" id="fDelete" hidden>Видалити</button>
+        <button type="submit" class="btn primary" id="fSave">Зберегти слово</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Діаграма за період -->
+  <dialog id="chartDlg" class="sheet glass" aria-labelledby="chartTitle">
+    <div class="sheet-body">
+      <div class="sheet-head">
+        <h2 id="chartTitle" tabindex="-1"></h2>
+        <button type="button" class="icon-btn" id="chartClose" aria-label="Закрити"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <p class="sheet-sub" id="chartSummary"></p>
+      <div id="chartBody"></div>
+      <div class="chart-nav">
+        <button type="button" class="btn ghost small" id="chartPrev">Раніше</button>
+        <button type="button" class="btn ghost small" id="chartNext">Пізніше</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

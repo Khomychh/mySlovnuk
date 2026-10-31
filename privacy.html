@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Політика конфіденційності</title>
+  <meta name="description" content="Які дані зберігає застосунок «Словник» і де.">
+  <meta name="theme-color" content="#DDE6E1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E2C2D" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { padding-bottom: 40px; }
+    .doc { max-width: 680px; margin: 0 auto; padding: 0 16px; }
+    .doc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: calc(18px + env(safe-area-inset-top)) 0 10px; }
+    .doc-head a { color: var(--ink); text-decoration: none; font: 500 var(--t-l)/1 var(--f-display); }
+    .doc-head .btn { min-height: 40px; font-size: var(--t-s); }
+    article.panel { padding: 28px 24px; }
+    article h1 { font: 500 var(--t-xl)/1.2 var(--f-display); letter-spacing: -.015em; }
+    article h2 { margin-top: 28px; }
+    article p, article li { color: var(--ink-soft); max-width: 64ch; }
+    article p { margin-top: 10px; }
+    article ul { margin: 10px 0 0; padding-left: 20px; }
+    article li { margin-top: 6px; }
+    article a { color: var(--accent); text-underline-offset: 3px; }
+    .updated { margin-top: 8px; font-size: var(--t-s); color: var(--ink-faint); }
+  </style>
+</head>
+<body>
+  <div class="sea" aria-hidden="true">
+    <span class="pebble p1"></span><span class="pebble p2"></span><span class="pebble p3"></span><span class="pebble p4"></span>
+  </div>
+  <div class="doc">
+    <header class="doc-head">
+      <a href="./">Словник</a>
+      <a class="btn ghost" href="./" style="white-space:nowrap">До словника</a>
+    </header>
+
+    <article class="panel glass">
+      <h1>Політика конфіденційності</h1>
+      <p class="updated">Оновлено 31 жовтня 2026 року</p>
+
+      <p>«Словник» — застосунок для особистого списку слів. У нього немає власного сервера, облікових записів, реклами чи аналітики. Розробник не бачить ваших слів і не отримує їх.</p>
+
+      <h2>Що зберігається на вашому пристрої</h2>
+      <p>Слова, переклади, транскрипції, коментарі, прогрес повторення й налаштування зберігаються лише в пам'яті вашого браузера на цьому пристрої. Якщо очистити дані сайту в браузері, вони зникнуть, хіба що у вас є резервна копія.</p>
+
+      <h2>Резервна копія в Google Диску</h2>
+      <p>Якщо ви увійдете через Google, застосунок збереже один файл із копією словника в прихованій папці застосунку на <em>вашому</em> Google Диску. Для цього він просить лише один доступ:</p>
+      <ul>
+        <li><code>drive.appdata</code>: створювати, читати й змінювати власні дані застосунку на вашому Диску.</li>
+      </ul>
+      <p>Застосунок не бачить інших ваших файлів на Диску, вашої пошти чи контактів. Файл копії передається безпосередньо між вашим браузером і Google, без посередників. Його використовують лише для того, щоб відновити й синхронізувати ваш словник між пристроями.</p>
+      <p>Використання й передача застосунком інформації, отриманої з Google API, відповідає <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Політиці щодо даних користувачів Google API Services</a>, зокрема вимогам щодо обмеженого використання (Limited Use).</p>
+
+      <h2>Як відключити або видалити копію</h2>
+      <ul>
+        <li>Відключити: у застосунку відкрийте Параметри → Резервна копія в Google → «Відключити». Або в обліковому записі Google: <a href="https://myaccount.google.com/connections" rel="noopener">Безпека → Сторонні застосунки й сервіси</a>.</li>
+        <li>Видалити копію: на <a href="https://drive.google.com/drive/settings" rel="noopener">drive.google.com</a> відкрийте Налаштування → Керування застосунками → «Словник» → «Видалити приховані дані застосунку».</li>
+      </ul>
+
+      <h2>Сторонні сервіси</h2>
+      <ul>
+        <li><strong>Google Fonts</strong>: шрифти сторінки завантажуються з серверів Google.</li>
+        <li><strong>Озвучення</strong> виконує ваш браузер. Деякі голоси, наприклад онлайн-голоси Google у Chrome, можуть надсилати текст слова постачальнику голосу.</li>
+        <li><strong>Пошук транскрипції</strong>: коли ви натискаєте «Знайти», слово надсилається до безкоштовного словника <a href="https://dictionaryapi.dev" rel="noopener">dictionaryapi.dev</a>. Без натискання нічого не надсилається.</li>
+      </ul>
+
+      <h2>Діти</h2>
+      <p>Застосунок не збирає персональних даних, тож не збирає їх і в дітей.</p>
+
+      <h2>Зміни й контакт</h2>
+      <p>Якщо ця політика зміниться, нова версія з'явиться на цій сторінці з новою датою. Питання надсилайте на <a href="mailto:CONTACT_EMAIL">CONTACT_EMAIL</a>.</p>
+    </article>
+  </div>
+</body>
+</html>

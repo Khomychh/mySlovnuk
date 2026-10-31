@@ -1,0 +1,19 @@
+# IDE (PyCharm / JetBrains, VS Code)
+.idea/
+.vscode/
+*.iml
+
+# Системні файли
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Логи й тимчасові файли
+*.log
+*.tmp
+*.bak
+
+# Локальні налаштування, якщо з'являться
+*.local
+.env
+.env.*
