@@ -20,6 +20,10 @@
   --grain-opacity: .22;
   --st-done: #2A8E66;
   --st-try: #B5731A;
+  --g0: #B8456A;
+  --g1: #B5731A;
+  --g2: #2A8E66;
+  --g3: #3B57A6;
 
   --f-display: "Unbounded", "Onest", system-ui, sans-serif;
   --f-body: "Onest", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -57,6 +61,10 @@
     --grain-opacity: .12;
     --st-done: #3A9C76;
     --st-try: #BF8528;
+    --g0: #CC6489;
+    --g1: #BF8528;
+    --g2: #3A9C76;
+    --g3: #748EDC;
     color-scheme: dark;
   }
 }
@@ -75,6 +83,10 @@
   --grain-opacity: .12;
   --st-done: #3A9C76;
   --st-try: #BF8528;
+  --g0: #CC6489;
+  --g1: #BF8528;
+  --g2: #3A9C76;
+  --g3: #748EDC;
   color-scheme: dark;
 }
 
@@ -240,10 +252,10 @@ main { max-width: 600px; margin: 0 auto; padding: 6px 16px 0; }
   font-weight: 600;
 }
 .grade small { font-weight: 400; font-size: var(--t-s); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
-.grade[data-g="0"] { box-shadow: inset 0 -3px 0 var(--amber); }
-.grade[data-g="1"] { box-shadow: inset 0 -3px 0 #B9A27A; }
-.grade[data-g="2"] { box-shadow: inset 0 -3px 0 #4FA585; }
-.grade[data-g="3"] { box-shadow: inset 0 -3px 0 var(--accent); }
+.grade[data-g="0"] { box-shadow: inset 0 -3px 0 var(--g0); }
+.grade[data-g="1"] { box-shadow: inset 0 -3px 0 var(--g1); }
+.grade[data-g="2"] { box-shadow: inset 0 -3px 0 var(--g2); }
+.grade[data-g="3"] { box-shadow: inset 0 -3px 0 var(--g3); }
 .grade:active { transform: translateY(1px); }
 .keys-hint { margin-top: 12px; text-align: center; font-size: var(--t-s); color: var(--ink-faint); }
 @media (hover: none) { .keys-hint { display: none; } }
@@ -624,7 +636,7 @@ main { max-width: 600px; margin: 0 auto; padding: 6px 16px 0; }
 .cal-day.done { background: radial-gradient(circle at 30% 26%, rgba(255,255,255,.45), transparent 50%), var(--st-done); color: #fff; font-weight: 600; }
 .cal-day.try { box-shadow: inset 0 0 0 2px var(--st-try); color: var(--ink); font-weight: 500; }
 .cal-day.future { opacity: .35; cursor: default; }
-.cal-day.today:not(.sel) { outline: 1.5px dashed var(--ink-soft); outline-offset: 2px; }
+.cal-day.is-today:not(.sel) { outline: 1.5px dashed var(--ink-soft); outline-offset: 2px; }
 .cal-day.sel { outline: 2.5px solid var(--accent); outline-offset: 2px; }
 .cal-day:not(:disabled):active { transform: scale(.94); }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 18px; font-size: var(--t-s); color: var(--ink-soft); }
@@ -974,3 +986,23 @@ input::placeholder, textarea::placeholder { color: var(--ink-faint); opacity: 1;
 .review-day { margin-top: 16px; }
 .review-day h2 { font: 500 var(--t-m)/1.3 var(--f-display); }
 .review-day .tally { margin-top: 12px; }
+
+/* ============ Статистика дня: слова окремо, відповіді окремо ============ */
+.day-nums { display: flex; gap: 28px; margin-top: 14px; }
+.day-num { display: grid; gap: 0; }
+.day-num b { font: 500 1.6rem/1.1 var(--f-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.day-num span { font-size: var(--t-s); color: var(--ink-soft); }
+.answers { margin-top: 16px; }
+.ans-bar { display: flex; gap: 2px; height: 10px; }
+.ans-bar i { display: block; min-width: 6px; flex-basis: 0; border-radius: 3px; }
+.ans-bar i:first-child { border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
+.ans-bar i:last-child { border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
+.ans-g0 { background: var(--g0); }
+.ans-g1 { background: var(--g1); }
+.ans-g2 { background: var(--g2); }
+.ans-g3 { background: var(--g3); }
+.ans-legend { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--t-s); color: var(--ink-soft); }
+.ans-legend li { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ans-legend b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ans-legend li.zero { opacity: .5; }
+.ans-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }

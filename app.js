@@ -338,7 +338,7 @@ function summaryHtml(sm, nextLine, todo) {
     <div class="intro glass summary">
       <h2 tabindex="-1">${more ? 'Пройдено' : 'Готово'}: ${nWords(sm.words)} ${took}</h2>
       <p>${sm.fresh ? `${sm.fresh} ${plural(sm.fresh, ['нове', 'нові', 'нових'])}. ` : ''}${more ? `Ще ${todo} на сьогодні.` : nextLine}</p>
-      <div class="tally">${sm.grades.map((n, i) => (n ? `<span class="g${i}">${names[i]} <b>${n}</b></span>` : '')).join('')}</div>
+      ${answersHtml(sm.grades)}
       ${goalStrip()}
       <div class="row-btns">
         ${more
@@ -1434,7 +1434,7 @@ function renderCalendar() {
     const st = future ? 'future' : dayStatus(k);
     const n = dayCount(k);
     const label = `${fmtDay(date)}: ${future ? 'ще не настав' : `${nWords(n)}, ${STATUS_TEXT[st]}`}`;
-    html += `<button type="button" class="cal-day ${st} ${k === todayKey ? 'today' : ''} ${k === selectedDay ? 'sel' : ''}" data-day="${k}" ${future ? 'disabled' : ''} aria-label="${label}" ${k === selectedDay ? 'aria-pressed="true"' : 'aria-pressed="false"'}>${d}</button>`;
+    html += `<button type="button" class="cal-day ${st} ${k === todayKey ? 'is-today' : ''} ${k === selectedDay ? 'sel' : ''}" data-day="${k}" ${future ? 'disabled' : ''} aria-label="${label}" ${k === selectedDay ? 'aria-pressed="true"' : 'aria-pressed="false"'}>${d}</button>`;
   }
   $('#calGrid').innerHTML = html;
 }
@@ -1468,11 +1468,11 @@ function dayStatsBody(k, { withLine = true, expanded = false } = {}) {
   const shown = expanded ? fresh : fresh.slice(0, 5);
   return `
     ${withLine ? `<p class="day-line"><span class="st-mark ${st}" aria-hidden="true"></span>${nWords(n)} при цілі ${goal}: ${STATUS_TEXT[st]}.</p>` : ''}
-    <div class="tally">
-      <span>Повторено <b>${reviewed}</b></span>
-      <span>Додано нових <b>${fresh.length}</b></span>
-      ${grades.map((c, i) => (c ? `<span class="g${i}">${names[i]} <b>${c}</b></span>` : '')).join('')}
+    <div class="day-nums">
+      <p class="day-num"><b>${reviewed}</b><span>повторено</span></p>
+      <p class="day-num"><b>${fresh.length}</b><span>${plural(fresh.length, ['нове', 'нові', 'нових'])}</span></p>
     </div>
+    ${answersHtml(grades)}
     ${fresh.length ? `<ul class="day-words">${shown.map(w => `<li>
       <span class="dw-text">
         <span class="dw-word" lang="${esc(deck())}">${w && !w.deleted ? esc(w.word) : 'Видалене слово'}</span>
@@ -1480,6 +1480,18 @@ function dayStatsBody(k, { withLine = true, expanded = false } = {}) {
       </span>
     </li>`).join('')}</ul>` : ''}
     ${fresh.length > 5 ? `<button type="button" class="btn ghost small day-more" data-day-more>${expanded ? 'Згорнути' : `Показати всі ${fresh.length}`}</button>` : ''}`;
+}
+// Відповіді — окремо від слів: смужка з чотирьох частин (за кількістю натискань) і легенда з числами.
+// Одне слово може мати кілька відповідей («Знову», потім «Добре»), тож суму зі словами не порівнюємо.
+function answersHtml(grades) {
+  const total = grades.reduce((a, b) => a + b, 0);
+  if (!total) return '';
+  const names = ['Знову', 'Важко', 'Добре', 'Легко'];
+  const label = names.map((nm, i) => `${nm} ${grades[i]}`).join(', ');
+  return `<div class="answers">
+    <div class="ans-bar" role="img" aria-label="Відповіді: ${label}">${grades.map((c, i) => (c ? `<i class="ans-g${i}" style="flex-grow:${c}"></i>` : '')).join('')}</div>
+    <ul class="ans-legend">${grades.map((c, i) => `<li class="${c ? '' : 'zero'}"><i class="ans-dot ans-g${i}" aria-hidden="true"></i>${names[i]} <b>${c}</b></li>`).join('')}</ul>
+  </div>`;
 }
 function renderDay() {
   const k = selectedDay;
