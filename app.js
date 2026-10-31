@@ -264,7 +264,8 @@ function renderReview() {
         <p>${nextLine()}</p>
         ${goalStrip()}
         <button class="btn ghost" type="button" data-act="add">Додати слово</button>
-      </div>`;
+      </div>
+      ${todayStatsPanel()}`;
     return;
   }
   root.innerHTML = startHtml(c, todo);
@@ -295,7 +296,8 @@ function startHtml(c, todo) {
       </div>
       ${goalStrip()}
       <button class="btn primary start-btn" type="button" data-act="start">Почати</button>
-    </div>`;
+    </div>
+    ${todayStatsPanel()}`;
 }
 
 // Скільки оцінок уже поставлено в цій мові (для підказки новачкам)
@@ -343,7 +345,8 @@ function summaryHtml(sm, nextLine, todo) {
           ? '<button class="btn primary" type="button" data-act="start">Продовжити</button><button class="btn ghost" type="button" data-act="progress">Прогрес</button>'
           : '<button class="btn primary" type="button" data-act="progress">Прогрес</button><button class="btn ghost" type="button" data-act="add">Додати слово</button>'}
       </div>
-    </div>`;
+    </div>
+    ${todayStatsPanel()}`;
 }
 
 root.addEventListener('click', e => {
@@ -352,6 +355,7 @@ root.addEventListener('click', e => {
   if (act === 'start') return startSession();
   if (act === 'progress') return go('progress');
   if (act === 'exit') return exitSession();
+  if (e.target.closest('[data-day-more]')) { reviewDayAll = !reviewDayAll; renderReview(); root.querySelector('[data-day-more]')?.focus(); return; }
   if (act === 'speak-form') {
     e.stopPropagation();
     const w = currentWord(), b = e.target.closest('button');
@@ -1447,46 +1451,51 @@ $('#calGrid').addEventListener('click', e => {
 });
 
 /* ---- Статистика дня ---- */
+// Спільна для вкладок «Прогрес» і «Повторення». Список — лише нові слова, додані цього дня.
+// withLine: рядок «N слів при цілі G» (на вкладці повторення ціль уже показують скельця)
+function dayStatsBody(k, { withLine = true, expanded = false } = {}) {
+  const d = langLog()[k];
+  const entries = d ? Object.entries(d.w) : [];
+  const n = entries.length;
+  if (!n) return '';
+  const goal = dayGoal(k), st = dayStatus(k);
+  const byId = new Map(db.words.map(w => [w.id, w]));
+  const fresh = entries.filter(([, e]) => e.a).map(([id]) => byId.get(id));
+  const reviewed = n - fresh.length;
+  const grades = [0, 0, 0, 0];
+  for (const [, e] of entries) for (const g of e.g || []) grades[g]++;
+  const names = ['Знову', 'Важко', 'Добре', 'Легко'];
+  const shown = expanded ? fresh : fresh.slice(0, 5);
+  return `
+    ${withLine ? `<p class="day-line"><span class="st-mark ${st}" aria-hidden="true"></span>${nWords(n)} при цілі ${goal}: ${STATUS_TEXT[st]}.</p>` : ''}
+    <div class="tally">
+      <span>Повторено <b>${reviewed}</b></span>
+      <span>Додано нових <b>${fresh.length}</b></span>
+      ${grades.map((c, i) => (c ? `<span class="g${i}">${names[i]} <b>${c}</b></span>` : '')).join('')}
+    </div>
+    ${fresh.length ? `<ul class="day-words">${shown.map(w => `<li>
+      <span class="dw-text">
+        <span class="dw-word" lang="${esc(deck())}">${w && !w.deleted ? esc(w.word) : 'Видалене слово'}</span>
+        ${w && !w.deleted ? `<span class="dw-tr">${esc(w.translation)}</span>` : ''}
+      </span>
+    </li>`).join('')}</ul>` : ''}
+    ${fresh.length > 5 ? `<button type="button" class="btn ghost small day-more" data-day-more>${expanded ? 'Згорнути' : `Показати всі ${fresh.length}`}</button>` : ''}`;
+}
 function renderDay() {
   const k = selectedDay;
   const date = fromKey(k);
   const isToday = k === dayKey(Date.now());
-  const d = langLog()[k];
-  const entries = d ? Object.entries(d.w) : [];
-  const n = entries.length, goal = dayGoal(k), st = dayStatus(k);
   const weekday = date.toLocaleDateString('uk', { weekday: 'long' });
   const title = `${isToday ? 'Сьогодні' : weekday[0].toUpperCase() + weekday.slice(1)}, ${fmtDay(date)}`;
-  let body;
-  if (!n) {
-    body = `<p class="day-line">${isToday ? 'Сьогодні ще не було повторень.' : 'Цього дня повторень не було.'}</p>`;
-  } else {
-    const added = entries.filter(([, e]) => e.a).length;
-    const reviewed = n - added;
-    const grades = [0, 0, 0, 0];
-    for (const [, e] of entries) for (const g of e.g || []) grades[g]++;
-    const names = ['Знову', 'Важко', 'Добре', 'Легко'];
-    const byId = new Map(db.words.map(w => [w.id, w]));
-    const items = entries
-      .map(([id, e]) => ({ w: byId.get(id), e }))
-      .sort((a, b) => (b.e.a || 0) - (a.e.a || 0));
-    const shown = dayAll ? items : items.slice(0, 5);
-    body = `
-      <p class="day-line"><span class="st-mark ${st}" aria-hidden="true"></span>${nWords(n)} при цілі ${goal}: ${STATUS_TEXT[st]}.</p>
-      <div class="tally">
-        <span>Повторено <b>${reviewed}</b></span>
-        <span>Додано нових <b>${added}</b></span>
-        ${grades.map((c, i) => c ? `<span class="g${i}">${names[i]} <b>${c}</b></span>` : '').join('')}
-      </div>
-      <ul class="day-words">${shown.map(({ w, e }) => `<li>
-        <span class="dw-text">
-          <span class="dw-word" lang="${esc(deck())}">${w && !w.deleted ? esc(w.word) : 'Видалене слово'}</span>
-          ${w && !w.deleted ? `<span class="dw-tr">${esc(w.translation)}</span>` : ''}
-        </span>
-        ${e.a ? '<span class="dw-tag">нове</span>' : ''}
-      </li>`).join('')}</ul>
-      ${items.length > 5 ? `<button type="button" class="btn ghost small day-more" data-day-more>${dayAll ? 'Згорнути' : `Показати всі ${items.length}`}</button>` : ''}`;
-  }
+  const body = dayStatsBody(k, { expanded: dayAll })
+    || `<p class="day-line">${isToday ? 'Сьогодні ще не було повторень.' : 'Цього дня повторень не було.'}</p>`;
   $('#dayPanel').innerHTML = `<h2>${title}</h2>${body}`;
+}
+// Те саме за сьогодні — на вкладці «Повторення»; поки нічого не повторено, блоку немає
+let reviewDayAll = false;
+function todayStatsPanel() {
+  const body = dayStatsBody(dayKey(Date.now()), { withLine: false, expanded: reviewDayAll });
+  return body ? `<div class="panel glass day-panel review-day"><h2>Сьогодні</h2>${body}</div>` : '';
 }
 let dayAll = false; // розгорнутий список слів дня
 $('#dayPanel').addEventListener('click', e => {

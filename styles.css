@@ -969,3 +969,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-faint); opacity: 1;
 .dw-tr { flex: none; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dw-tag { flex: none; }
 .day-more { margin-top: 10px; }
+
+/* Статистика дня на вкладці повторення */
+.review-day { margin-top: 16px; }
+.review-day h2 { font: 500 var(--t-m)/1.3 var(--f-display); }
+.review-day .tally { margin-top: 12px; }
