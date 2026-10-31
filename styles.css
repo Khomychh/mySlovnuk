@@ -92,6 +92,9 @@
 
 /* ============ База ============ */
 *, *::before, *::after { box-sizing: border-box; }
+/* без стандартної прямокутної підсвітки торкання на телефонах — відгук дають самі кнопки (стискання, колір) */
+html { -webkit-tap-highlight-color: transparent; }
+* { -webkit-tap-highlight-color: transparent; }
 html { -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; }
 body {
   margin: 0;
@@ -1151,3 +1154,7 @@ body.in-session { padding-bottom: 0; }
     linear-gradient(170deg, color-mix(in srgb, var(--c) 72%, #fff) 0%, var(--c) 55%, color-mix(in srgb, var(--c) 82%, #000) 100%);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), inset 0 -2px 4px rgba(0,0,0,.14), 0 6px 14px -8px var(--c);
 }
+
+/* відгук на торкання для кнопок, де його ще не було */
+.btn:active, .icon-btn:active, .chip:active, .lang-opt:active, .deck-tile:active, .voice-play:active, .ex-play:active, .speak:active, .dock button:active svg { transform: scale(.96); }
+.icon-btn, .speak, .voice-play, .ex-play, .chip, .lang-opt { transition: transform .1s ease, background-color .2s ease; }

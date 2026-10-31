@@ -10,7 +10,9 @@
     </radialGradient>
   </defs>
   <rect width="512" height="512" rx="116" fill="#DDE6E1"/>
+  <g transform="translate(-13 -18)">
   <path d="M120 270c-8-92 52-168 148-176 98-8 152 54 150 140-2 96-64 178-170 180-80 2-122-58-128-144Z" fill="url(#g)"/>
   <path d="M120 270c-8-92 52-168 148-176 98-8 152 54 150 140-2 96-64 178-170 180-80 2-122-58-128-144Z" fill="url(#h)"/>
   <path d="M318 214a68 68 0 1 0 0 92" fill="none" stroke="#0F3B3A" stroke-width="34" stroke-linecap="round"/>
+  </g>
 </svg>

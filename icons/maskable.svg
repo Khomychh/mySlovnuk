@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Повне тло без заокруглень: Android і iOS самі обрізають іконку під свою форму.
+       Скельце зменшене до безпечної зони (центральне коло ~80%), щоб маска нічого не зрізала. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#BFE6D6"/>
+      <stop offset="1" stop-color="#7DBFA6"/>
+    </linearGradient>
+    <radialGradient id="h" cx=".32" cy=".26" r=".5">
+      <stop offset="0" stop-color="#fff" stop-opacity=".75"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="#DDE6E1"/>
+  <g transform="translate(256 256) scale(.8) translate(-269 -274)">
+    <path d="M120 270c-8-92 52-168 148-176 98-8 152 54 150 140-2 96-64 178-170 180-80 2-122-58-128-144Z" fill="url(#g)"/>
+    <path d="M120 270c-8-92 52-168 148-176 98-8 152 54 150 140-2 96-64 178-170 180-80 2-122-58-128-144Z" fill="url(#h)"/>
+    <path d="M318 214a68 68 0 1 0 0 92" fill="none" stroke="#0F3B3A" stroke-width="34" stroke-linecap="round"/>
+  </g>
+</svg>
