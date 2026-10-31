@@ -72,7 +72,6 @@
     <section class="view" id="view-settings" data-view="settings" hidden aria-label="Налаштування">
       <div class="panel glass deck-panel">
         <h2 id="deckHeading">Мова, яку вивчаю</h2>
-        <p class="muted">У кожної мови свої слова й повторення.</p>
         <div class="deck-grid" id="deckGrid" role="radiogroup" aria-labelledby="deckHeading"></div>
         <div class="deck-add" id="deckAdd" hidden>
           <select id="deckAddSel" aria-label="Нова мова"></select>
@@ -82,7 +81,7 @@
       </div>
 
       <div class="panel glass">
-        <h2>Озвучення й навчання</h2>
+        <h2>Озвучення</h2>
         <p class="muted" id="deckNote"></p>
         <label class="field">
           <span>Голос</span>
@@ -102,16 +101,12 @@
           <span class="switch-track" aria-hidden="true"></span>
           <span>Читати форми й приклади, коли відкривається переклад</span>
         </label>
-        <label class="field">
-          <span>Нових слів на день</span>
-          <input id="setNew" type="number" min="0" max="200" inputmode="numeric">
-        </label>
         <button class="btn ghost" type="button" id="testVoice">Прослухати голос</button>
       </div>
 
       <div class="panel glass">
         <h2>Резервна копія в Google</h2>
-        <p class="muted" id="gStatus">Словник зберігається в прихованій папці вашого Google Диска. Інші файли застосунок не бачить.</p>
+        <p class="muted" id="gStatus"></p>
         <div class="row-btns">
           <!-- Кнопка за правилами оформлення Google Sign-In -->
           <button class="gsi-btn" type="button" id="gConnect">
@@ -126,18 +121,12 @@
           <button class="btn ghost" type="button" id="gSync" hidden>Синхронізувати зараз</button>
           <button class="btn ghost" type="button" id="gDisconnect" hidden>Відключити</button>
         </div>
-        <p class="fine-print">Застосунок бачить лише власний файл копії на вашому Диску. <a href="privacy.html">Політика конфіденційності</a></p>
-      </div>
-
-      <div class="panel glass" id="setsPanel" hidden>
-        <h2>Готові набори</h2>
-        <p class="muted">Слова з набору додаються як нові й з'являтимуться в повторенні поступово, в межах денного ліміту нових слів.</p>
-        <ul class="sets" id="setList"></ul>
+        <p class="fine-print">Інших файлів на Диску застосунок не бачить. <a href="privacy.html">Конфіденційність</a></p>
       </div>
 
       <div class="panel glass">
         <h2>Файл</h2>
-        <p class="muted">Збережіть копію словника на пристрій або додайте слова з файлу. Слова з файлу об'єднаються з наявними.</p>
+        <p class="muted">Слова з файлу додаються до наявних.</p>
         <div class="row-btns">
           <button class="btn ghost" type="button" id="exportBtn">Завантажити копію</button>
           <label class="btn ghost file-btn">Відкрити файл<input id="importFile" type="file" accept="application/json,.json"></label>
@@ -147,22 +136,22 @@
   </main>
 
   <nav class="dock glass" aria-label="Розділи">
-    <button type="button" data-go="review" aria-current="page">
+    <button type="button" data-go="review" title="Повторення" aria-current="page">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="13" height="15" rx="3"/><path d="M8 3h9a3 3 0 0 1 3 3v11"/></svg>
       <span>Повторення</span>
     </button>
-    <button type="button" data-go="list">
+    <button type="button" data-go="list" title="Слова">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h9"/></svg>
       <span>Слова</span>
     </button>
-    <button type="button" class="dock-add" id="addBtn" aria-label="Додати слово">
+    <button type="button" class="dock-add" id="addBtn" aria-label="Додати слово" title="Додати слово">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
     </button>
-    <button type="button" data-go="progress">
+    <button type="button" data-go="progress" title="Прогрес">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/><path d="m9 15 2 2 4-4"/></svg>
       <span>Прогрес</span>
     </button>
-    <button type="button" data-go="settings">
+    <button type="button" data-go="settings" title="Параметри">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/></svg>
       <span>Параметри</span>
     </button>
@@ -204,14 +193,14 @@
       <div class="field">
         <label for="fForms" class="field-label">Форми</label>
         <input name="forms" id="fForms" autocomplete="off" spellcheck="false" placeholder="went, gone" aria-describedby="fFormsHint">
-        <span class="field-hint" id="fFormsHint">Для неправильних дієслів, множини тощо. Через кому, без самого слова.</span>
+        <span class="field-hint" id="fFormsHint">Через кому, без самого слова.</span>
       </div>
       <div class="field">
         <span class="field-head"><label for="fEx">Приклади</label>
           <button type="button" class="link-inline" id="fExSpeak" hidden>Прослухати</button>
         </span>
         <textarea name="examples" id="fEx" rows="3" spellcheck="false" placeholder="I love you | Я люблю тебе" aria-describedby="fExHint"></textarea>
-        <span class="field-hint" id="fExHint">Кожен приклад з нового рядка. Переклад після |, його можна не писати.</span>
+        <span class="field-hint" id="fExHint">Кожен з нового рядка, переклад після |.</span>
       </div>
       <div class="field">
         <label for="fNote" class="field-label">Коментар</label>

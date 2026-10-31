@@ -80,7 +80,7 @@
 
 /* ============ База ============ */
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; }
 body {
   margin: 0;
   min-height: 100dvh;
@@ -350,7 +350,7 @@ main { max-width: 600px; margin: 0 auto; padding: 6px 16px 0; }
   left: 50%; transform: translateX(-50%);
   bottom: calc(14px + env(safe-area-inset-bottom));
   width: min(568px, calc(100% - 32px));
-  display: grid; grid-template-columns: 1fr 1fr auto 1fr 1fr;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr);
   align-items: center; gap: 2px;
   padding: 6px;
   border-radius: 26px;
@@ -672,24 +672,13 @@ main { max-width: 600px; margin: 0 auto; padding: 6px 16px 0; }
 #chartTitle:focus { outline: none; }
 
 /* ============ Вузькі телефони ============ */
-@media (max-width: 400px) {
-  /* у нижній панелі підпис лише в активної вкладки, решта — іконки з прихованою назвою */
-  .dock button:not([aria-current="page"]):not(.dock-add) span {
-    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
-  }
-  .dock button svg { width: 24px; height: 24px; }
-  /* активна вкладка ширша, щоб її підпис вміщався повністю */
-  .dock { display: flex; }
-  .dock button { flex: 1 1 0; }
-  .dock button[aria-current="page"] { flex: 1.9 1 0; }
-  .dock .dock-add { flex: none; }
-}
 @media (max-width: 360px) {
   .today { padding: 22px 18px 18px; }
   .slab, .intro { padding-left: 20px; padding-right: 20px; }
   .panel { padding-left: 16px; padding-right: 16px; }
-  .stepper .icon-btn { width: 40px; height: 40px; }
-  .stepper input { width: 54px; }
+  .stepper { gap: 4px; }
+  .stepper .icon-btn { width: 38px; height: 38px; }
+  .stepper input { width: 48px; min-height: 40px; }
   .period { padding: 12px 12px 10px; }
   .period-num { font-size: 1.7rem; }
   .grades { gap: 6px; }
@@ -766,14 +755,6 @@ main { max-width: 600px; margin: 0 auto; padding: 6px 16px 0; }
 .slab:not(.revealed) .form { visibility: hidden; }
 .row-forms { font-size: var(--t-s); color: var(--ink-faint); }
 
-/* ============ Готові набори ============ */
-.sets { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 10px; }
-.set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 18px; border: 1px solid var(--glass-edge); background: var(--glass-lo); }
-.set-text { display: grid; gap: 2px; min-width: 0; }
-.set-name { font: 500 var(--t-m)/1.3 var(--f-display); }
-.set-sub { font-size: var(--t-s); color: var(--ink-soft); }
-.set-row .btn { flex: none; }
-
 /* ============ Модальні вікна: поверх екрана, сторінка під ними не гортається ============ */
 /* .glass задає position: relative — тут повертаємо fixed (dialog.sheet сильніший за .glass) */
 dialog.sheet {
@@ -808,3 +789,22 @@ html:has(dialog[open]) body { overflow: hidden; }
 .intro .row-btns { margin-top: 22px; }
 .intro .row-btns .btn { margin-top: 0; }
 .summary h2:focus { outline: none; }
+
+/* ============ Нижня панель: лише іконки ============ */
+.dock button span {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+.dock button { min-height: 52px; padding: 4px 0; }
+.dock button svg { box-sizing: content-box; padding: 7px 16px; border-radius: 16px; width: 24px; height: 24px; transition: background-color .2s ease, color .2s ease; }
+.dock button[aria-current="page"] { background: none; }
+.dock button[aria-current="page"] svg { background: var(--glass-hi); color: var(--accent); box-shadow: inset 0 0 0 1px var(--glass-edge); }
+.dock button:not(.dock-add):hover svg { background: var(--glass-lo); }
+.dock button[aria-current="page"]:hover svg { background: var(--glass-hi); }
+
+/* підказки клавіш */
+kbd {
+  display: inline-block; min-width: 1.6em; padding: 1px 6px; margin: 0 2px;
+  border-radius: 6px; border: 1px solid var(--glass-edge); background: var(--glass-hi);
+  font: 500 .72rem/1.5 var(--f-body); color: var(--ink-soft); text-align: center;
+}
+.keys-hint kbd + kbd { margin-left: 0; }

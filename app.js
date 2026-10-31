@@ -11,7 +11,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 
 // Кожна мова — окрема колода зі своїми словами, чергою й налаштуваннями.
 // Ключ колоди — базовий код мови ('en', 'de'); акцент обирається голосом.
-const langDefaults = { voiceURI: '', rate: 0.95, autoSpeak: true, autoExamples: true, newPerDay: 20, goal: 10, updatedAt: 0 };
+const langDefaults = { voiceURI: '', rate: 0.95, autoSpeak: true, autoExamples: true, goal: 10, updatedAt: 0 };
 const baseLang = l => (l || 'en').replace('_', '-').split('-')[0].toLowerCase();
 
 // Перехід зі старого формату, де мова була одна на весь словник
@@ -20,7 +20,7 @@ function migrate(d) {
   if (!s.langs) {
     const b = baseLang(s.lang || 'en-US');
     const region = /-/.test(s.lang || '') ? s.lang.replace('_', '-') : '';
-    s.langs = { [b]: { ...langDefaults, region, voiceURI: s.voiceURI || '', rate: s.rate ?? 0.95, autoSpeak: s.autoSpeak ?? true, newPerDay: s.newPerDay ?? 20, updatedAt: s.updatedAt || 0 } };
+    s.langs = { [b]: { ...langDefaults, region, voiceURI: s.voiceURI || '', rate: s.rate ?? 0.95, autoSpeak: s.autoSpeak ?? true, updatedAt: s.updatedAt || 0 } };
     s.active = s.active || b;
     for (const k of ['lang', 'voiceURI', 'rate', 'autoSpeak', 'newPerDay']) delete s[k];
   }
@@ -127,27 +127,19 @@ function dueLabel(w) {
   return { text: `за ${fmtSpan(days * DAY)}`, now: false };
 }
 
-function newDoneToday(l = deck()) { const n = db.meta.newBy[l]; return n && n.day === dayKey(Date.now()) ? n.count : 0; }
-function countNewDone(l) {
-  const today = dayKey(Date.now());
-  const n = db.meta.newBy[l];
-  db.meta.newBy[l] = n && n.day === today ? { day: today, count: n.count + 1 } : { day: today, count: 1 };
-}
 function counts(l = deck()) {
   const now = Date.now();
   const words = live(l);
   const due = words.filter(w => w.lastReview && w.due <= now).length;
-  const freshAll = words.filter(w => !w.lastReview).length;
-  const fresh = Math.min(freshAll, Math.max(0, cfg(l).newPerDay - newDoneToday(l)));
+  const fresh = words.filter(w => !w.lastReview).length; // нових не обмежуємо
   const learned = words.filter(w => w.interval >= 21).length;
-  return { total: words.length, due, fresh, freshAll, learned };
+  return { total: words.length, due, fresh, learned };
 }
 function buildQueue() {
   const now = Date.now();
   const words = live();
   const due = words.filter(w => w.lastReview && w.due <= now).sort((a, b) => a.due - b.due);
-  const fresh = words.filter(w => !w.lastReview).sort((a, b) => a.createdAt - b.createdAt)
-    .slice(0, Math.max(0, cfg().newPerDay - newDoneToday()));
+  const fresh = words.filter(w => !w.lastReview).sort((a, b) => a.createdAt - b.createdAt);
   // нові слова вплітаємо між повтореннями: одне нове після кожних трьох
   const q = [];
   let i = 0, j = 0;
@@ -256,7 +248,6 @@ function renderReview() {
     return;
   }
   const todo = c.due + c.fresh;
-  const tally = `<div class="tally"><span>У списку <b>${nWords(c.total)}</b></span><span>Добре знаю <b>${c.learned}</b></span></div>`;
   const nextLine = () => {
     const next = live().filter(w => w.lastReview).sort((a, b) => a.due - b.due)[0];
     return next ? `Наступні слова чекатимуть ${esc(dueLabel(next).text)}.` : 'Додайте нові слова, щоб продовжити.';
@@ -268,27 +259,25 @@ function renderReview() {
   if (todo === 0) {
     root.innerHTML = `
       <div class="intro glass">
-        <h2>На сьогодні все повторено</h2>
-        <p>${c.freshAll ? 'Ліміт нових слів на сьогодні вичерпано. ' : ''}${nextLine()}</p>
+        <h2>На сьогодні все</h2>
+        <p>${nextLine()}</p>
         ${goalStrip()}
-        ${tally}
         <button class="btn ghost" type="button" data-act="add">Додати слово</button>
       </div>`;
     return;
   }
   const parts = [];
-  if (c.due) parts.push(`${nWords(c.due)} на повторення`);
+  if (c.due) parts.push(`${c.due} на повторення`);
   if (c.fresh) parts.push(`${c.fresh} ${plural(c.fresh, ['нове', 'нові', 'нових'])}`);
-  // Пояснення потрібне лише на початку; далі — скільки часу займе сесія
+  // Пояснення лише на початку; далі — склад черги й приблизний час
   const help = reviewsTotal() < 20
-    ? 'Подивіться на слово, згадайте переклад, а тоді відкрийте його та оцініть, наскільки легко пригадали.'
-    : (m => `Займе приблизно ${m} ${plural(m, ['хвилину', 'хвилини', 'хвилин'])}.`)(estimateMinutes());
+    ? 'Згадайте переклад, відкрийте його й оцініть, наскільки легко пригадали.'
+    : `${parts.join(' і ')}, приблизно ${estimateMinutes()} хв.`;
   root.innerHTML = `
     <div class="intro glass">
-      <h2>Сьогодні: ${parts.join(' і ')}</h2>
+      <h2>Сьогодні ${nWords(todo)}</h2>
       <p>${help}</p>
       ${goalStrip()}
-      ${tally}
       <button class="btn primary" type="button" data-act="start">Почати повторення</button>
     </div>`;
 }
@@ -313,8 +302,8 @@ function goalStrip() {
   const n = dayCount(dayKey(Date.now())), goal = goalOf();
   const done = n >= goal;
   const text = done
-    ? `<b>Ціль на сьогодні досягнуто</b>: ${nWords(n)}${n > goal ? ` при цілі ${goal}` : ''}`
-    : n ? `Ціль на сьогодні: <b>${n} з ${goal}</b>` : `Ціль на сьогодні: <b>${nWords(goal)}</b>`;
+    ? `<b>Ціль досягнуто</b>`
+    : `Ціль: <b>${n} з ${goal}</b>`;
   return `<div class="goal-strip ${done ? 'done' : ''}">
     <p class="goal-strip-text">${done ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>' : ''}<span>${text}</span></p>
     <div role="progressbar" aria-label="Ціль дня" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${Math.min(n, goal)}">${pebblesHtml(n, goal)}</div>
@@ -324,16 +313,16 @@ function goalStrip() {
 let lastSummary = null;
 function summaryHtml(sm, nextLine, c) {
   const mins = Math.round((sm.ended - sm.started) / MIN);
-  const took = mins < 1 ? 'менш ніж за хвилину' : `за ${mins} ${plural(mins, ['хвилину', 'хвилини', 'хвилин'])}`;
+  const took = mins < 1 ? 'за хвилину' : `за ${mins} хв`;
   const names = ['Знову', 'Важко', 'Добре', 'Легко'];
   return `
     <div class="intro glass summary">
-      <h2 tabindex="-1">Повторення завершено</h2>
-      <p>Повторено ${nWords(sm.words)} ${took}${sm.fresh ? `, з них ${sm.fresh} ${plural(sm.fresh, ['нове', 'нові', 'нових'])}` : ''}. ${nextLine}</p>
+      <h2 tabindex="-1">Готово: ${nWords(sm.words)} ${took}</h2>
+      <p>${sm.fresh ? `${sm.fresh} ${plural(sm.fresh, ['нове', 'нові', 'нових'])}. ` : ''}${nextLine}</p>
       <div class="tally">${sm.grades.map((n, i) => (n ? `<span class="g${i}">${names[i]} <b>${n}</b></span>` : '')).join('')}</div>
       ${goalStrip()}
       <div class="row-btns">
-        <button class="btn primary" type="button" data-act="progress">Переглянути прогрес</button>
+        <button class="btn primary" type="button" data-act="progress">Прогрес</button>
         <button class="btn ghost" type="button" data-act="add">Додати слово</button>
       </div>
     </div>`;
@@ -396,7 +385,7 @@ function renderCard(fresh = true) {
         </button>
       </div>
       ${w.transcription ? `<p class="ipa">${esc(w.transcription)}</p>` : ''}
-      ${w.forms?.length ? `<p class="forms-ask">Згадайте переклад і ${w.forms.length === 1 ? 'форму' : `${w.forms.length} ${plural(w.forms.length, ['форму', 'форми', 'форм'])}`}</p>` : ''}
+      ${w.forms?.length ? `<p class="forms-ask">+ ${w.forms.length} ${plural(w.forms.length, ['форма', 'форми', 'форм'])}</p>` : ''}
       <div class="answer">
         <div class="answer-content" ${session.revealed ? '' : 'aria-hidden="true"'}>
           <p class="translation">${esc(w.translation)}</p>
@@ -410,16 +399,16 @@ function renderCard(fresh = true) {
             <span class="ex-text"><span class="ex-t" lang="${esc(w.lang)}">${esc(ex.t)}</span>${ex.tr ? `<span class="ex-tr">${esc(ex.tr)}</span>` : ''}</span>
           </li>`).join('')}</ul>` : ''}
         </div>
-        <div class="frost-hint" aria-hidden="true"><span>Торкніться, щоб побачити переклад</span></div>
       </div>
     </article>
     <div class="actions">
       ${session.revealed ? gradesHtml(w) : `<button class="btn primary reveal-btn" type="button" data-act="reveal">Показати переклад</button>`}
-      <p class="keys-hint">${session.revealed ? `Клавіші 1–4 для оцінки, R повторює вимову${hasAnswerAudio(w) ? ', E читає форми й приклади' : ''}` : 'Пробіл відкриває переклад, R повторює вимову'}</p>
+      <p class="keys-hint">${session.revealed ? keysBack(w) : '<kbd>Пробіл</kbd> переклад <kbd>R</kbd> вимова'}</p>
     </div>`;
   if (fresh && cfg().autoSpeak && !session.revealed) speak(w.word, root.querySelector('.speak'));
 }
 
+const keysBack = w => `<kbd>1</kbd>–<kbd>4</kbd> оцінка <kbd>R</kbd> вимова${hasAnswerAudio(w) ? ` <kbd>E</kbd> ${w.examples?.length ? 'приклади' : 'форми'}` : ''}`;
 function gradesHtml(w) {
   const names = ['Знову', 'Важко', 'Добре', 'Легко'];
   return `<div class="grades" tabindex="-1" role="group" aria-label="Наскільки легко згадали">${names.map((n, g) =>
@@ -434,7 +423,7 @@ function reveal() {
   slab.querySelector('.answer-content').removeAttribute('aria-hidden');
   const actions = root.querySelector('.actions');
   const w = currentWord();
-  actions.innerHTML = `${gradesHtml(w)}<p class="keys-hint">Клавіші 1–4 для оцінки, R повторює вимову${hasAnswerAudio(w) ? ', E читає форми й приклади' : ''}</p>`;
+  actions.innerHTML = `${gradesHtml(w)}<p class="keys-hint">${keysBack(w)}</p>`;
   if (hasAnswerAudio(w) && cfg(w.lang).autoSpeak && cfg(w.lang).autoExamples) speakAnswer(w);
   actions.querySelector('.grades').focus({ preventScroll: true });
 }
@@ -445,7 +434,6 @@ function grade(g) {
   const wasNew = !w.lastReview;
   const updated = schedule(w, g);
   db.words[db.words.findIndex(x => x.id === w.id)] = updated;
-  if (wasNew) countNewDone(w.lang);
   logEvent(updated, 'review', g);
   const st = session.stats;
   st.grades[g]++;
@@ -698,8 +686,8 @@ $('#fLookup').addEventListener('click', async e => {
       });
     }
     const note = multi
-      ? 'У цього слова кілька значень з різною вимовою. Виберіть ту, що відповідає вашому перекладу. Для іншого значення краще окрема картка.'
-      : shown.length > 1 ? 'Натисніть варіант, щоб додати його. Можна вибрати кілька.' : '';
+      ? 'Різні значення вимовляються по-різному: виберіть своє. Інше значення краще окремою карткою.'
+      : shown.length > 1 ? 'Можна вибрати кілька.' : '';
     renderSuggest(box, items, note, groups);
   } catch {
     renderSuggest(box, [], navigator.onLine ? 'Словник не відповідає. Спробуйте ще раз або впишіть транскрипцію вручну.' : 'Немає інтернету. Впишіть транскрипцію вручну.');
@@ -740,61 +728,16 @@ function renderVoiceSettings() {
   voiceSel.value = vs.some(v => v.voiceURI === cfg().voiceURI) ? cfg().voiceURI : '';
   voiceSel.disabled = !vs.length;
 }
-/* ---------------- Готові набори ---------------- */
-const SETS = { en: [{ id: 'en-irregular', file: 'sets/en-irregular-verbs.json', name: 'Неправильні дієслова', count: 76 }] };
-const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-function renderSets() {
-  const sets = SETS[deck()] || [];
-  $('#setsPanel').hidden = !sets.length;
-  $('#setList').innerHTML = sets.map(set => {
-    const have = live().filter(w => w.set === set.id).length;
-    const all = have >= set.count;
-    return `<li class="set-row">
-      <span class="set-text"><span class="set-name">${esc(set.name)}</span>
-        <span class="set-sub">${all ? `Усі ${set.count} у вашому списку` : have ? `${have} з ${set.count} уже у списку` : `${set.count} дієслів із формами й перекладом`}</span></span>
-      <button type="button" class="btn ${all ? 'ghost' : 'primary'} small" data-set="${set.id}" ${all ? 'disabled' : ''}>${all ? 'Додано' : have ? 'Додати решту' : 'Додати'}</button>
-    </li>`;
-  }).join('');
-}
-$('#setList').addEventListener('click', async e => {
-  const b = e.target.closest('[data-set]');
-  if (!b) return;
-  const set = (SETS[deck()] || []).find(x => x.id === b.dataset.set);
-  b.disabled = true; b.textContent = 'Додаю…';
-  try {
-    const data = await (await fetch(set.file)).json();
-    const existing = new Set(live().map(w => w.word.toLowerCase()));
-    let added = 0, skipped = 0;
-    for (const it of data.words) {
-      if (existing.has(it.w.toLowerCase())) { skipped++; continue; }
-      const id = `${set.id}-${slug(it.w)}`;
-      const w = { ...newWord({ word: it.w, translation: it.tr, transcription: '', comment: it.c || '', examples: [], forms: it.f }), id, set: set.id };
-      const i = db.words.findIndex(x => x.id === id); // раніше видалене слово з набору повертаємо на те саме місце
-      if (i > -1) db.words[i] = w; else db.words.push(w);
-      added++;
-    }
-    persist();
-    toast(added
-      ? `Додано ${nWords(added)}${skipped ? `, ${skipped} вже були у списку` : ''}. Нові з'являтимуться до ${cfg().newPerDay} на день.`
-      : 'Усі слова з набору вже є у вашому списку');
-  } catch {
-    toast(navigator.onLine ? 'Не вдалося завантажити набір. Спробуйте ще раз.' : 'Немає інтернету, а набір ще не збережено для роботи офлайн.');
-  }
-  renderSettings(); // оновлює й лічильники на скельцях мов
-});
-
 function renderSettings() {
   const c = cfg();
   renderDecks();
-  renderSets();
-  $('#deckNote').textContent = `Для мови «${langLabelLower(deck())}». Кожна мова має власні налаштування.`;
+  $('#deckNote').textContent = `Для мови «${langLabelLower(deck())}».`;
   renderVoiceSettings();
   $('#setRate').value = c.rate;
   $('#rateOut').textContent = `${Number(c.rate).toFixed(2)}×`;
   $('#setAuto').checked = c.autoSpeak;
   $('#setAutoEx').checked = c.autoExamples;
   $('#setAutoEx').disabled = !c.autoSpeak;
-  $('#setNew').value = c.newPerDay;
   renderGoogle();
 }
 function setCfg(k, v) { const c = cfg(); c[k] = v; c.updatedAt = Date.now(); persist(); }
@@ -803,7 +746,6 @@ $('#setRate').addEventListener('input', e => { $('#rateOut').textContent = `${Nu
 $('#setRate').addEventListener('change', e => setCfg('rate', +e.target.value));
 $('#setAuto').addEventListener('change', e => { setCfg('autoSpeak', e.target.checked); $('#setAutoEx').disabled = !e.target.checked; });
 $('#setAutoEx').addEventListener('change', e => setCfg('autoExamples', e.target.checked));
-$('#setNew').addEventListener('change', e => setCfg('newPerDay', Math.max(0, Math.min(200, parseInt(e.target.value, 10) || 0))));
 const SAMPLES = { en: 'Hello, how are you?', de: 'Guten Tag, wie geht es Ihnen?', fr: 'Bonjour, comment allez-vous ?', es: 'Hola, ¿qué tal?', it: 'Ciao, come stai?', pl: 'Dzień dobry, jak się masz?', cs: 'Dobrý den, jak se máte?', pt: 'Olá, tudo bem?', ja: 'こんにちは', zh: '你好', ko: '안녕하세요', tr: 'Merhaba, nasılsın?' };
 $('#testVoice').addEventListener('click', e => speak(live()[0]?.word || SAMPLES[deck()] || 'Hello', e.currentTarget));
 
@@ -1064,11 +1006,11 @@ function renderGoogle() {
   $('#gSync').hidden = !linked;
   $('#gDisconnect').hidden = !linked;
   const status = $('#gStatus');
-  if (!CLIENT_ID) status.textContent = 'На цьому сайті резервну копію в Google ще не налаштовано. Поки що зберігайте копію у файл.';
-  else if (!linked) status.textContent = 'Увійдіть, і копія словника зберігатиметься на вашому Google Диску. Її можна відновити на будь-якому пристрої.';
+  if (!CLIENT_ID) status.textContent = 'На цьому сайті ще не налаштовано. Поки що зберігайте копію у файл.';
+  else if (!linked) status.textContent = 'Копія на вашому Google Диску, щоб відновити словник на будь-якому пристрої.';
   else status.textContent = db.meta.lastSync
-    ? `Остання синхронізація: ${new Date(db.meta.lastSync).toLocaleString('uk', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}. Після кожної зміни копія оновлюється сама, поки ви увійшли в Google.`
-    : 'Google підключено. Перша синхронізація ще не відбулася.';
+    ? `Збережено ${new Date(db.meta.lastSync).toLocaleString('uk', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}. Оновлюється сама після кожної зміни.`
+    : 'Підключено. Ще не синхронізовано.';
 }
 async function connectAndSync() {
   try {
@@ -1114,7 +1056,7 @@ function logEvent(w, kind, g) {
   const e = (d.w[w.id] ||= { g: [], a: 0 });
   if (kind === 'add') e.a = 1; else e.g.push(g);
   const after = dayCount(day, w.lang);
-  if (before < d.goal && after >= d.goal) setTimeout(() => toast(`Ціль на сьогодні досягнуто: ${nWords(after)}`), 400);
+  if (before < d.goal && after >= d.goal) setTimeout(() => toast('Ціль на сьогодні досягнуто'), 400);
 }
 function mergeLog(remote) {
   if (!remote || typeof remote !== 'object') return;
@@ -1206,17 +1148,10 @@ function renderToday() {
   const today = dayKey(Date.now());
   const n = dayCount(today), goal = goalOf();
   const done = n >= goal;
-  const head = done
-    ? `Ціль на сьогодні досягнуто: ${nWords(n)}`
-    : n === 0 ? `Сьогодні ще жодного слова з ${goal}` : `Сьогодні ${n} з ${goal} ${plural(goal, ['слова', 'слів', 'слів'])}`;
-  const left = goal - n;
-  const sub = done
-    ? (n > goal ? `На ${n - goal} більше, ніж ціль. Мова: ${langLabelLower(deck())}.` : `Мова: ${langLabelLower(deck())}.`)
-    : `Залишилось ${nWords(left)}. Рахуються повторені й додані сьогодні слова мови «${langLabelLower(deck())}».`;
+  const head = done ? 'Ціль досягнуто' : `Сьогодні ${n} з ${goal}`;
   const pebbles = pebblesHtml(n, goal);
   $('#todayCard').innerHTML = `
     <h2>${head}</h2>
-    <p>${sub}</p>
     <div role="progressbar" aria-label="Ціль дня" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${Math.min(n, goal)}">${pebbles}</div>
     <div class="goal-row">
       <span id="goalLabel">Ціль на день</span>
@@ -1396,7 +1331,7 @@ function renderChart() {
   $('#chartNext').disabled = offset >= 0;
   const avg = st.days ? Math.round(st.words / st.days) : 0;
   $('#chartSummary').textContent = st.days
-    ? `Ціль досягнуто ${nDays(st.done)} з ${st.days}${st.tried ? `, у ${nDays(st.tried)} була спроба` : ''}. Повторено ${nWords(st.words)}, у середньому ${avg} на день.`
+    ? `Ціль ${nDays(st.done)} з ${st.days}. ${nWords(st.words)}, ${avg} на день.`
     : to < firstDay() ? 'У цей період ви ще не вчили цю мову.' : 'Цей період ще не настав.';
 
   let yMax, goalLine = null, yLabel;
@@ -1422,8 +1357,8 @@ function renderChart() {
       </div>
       <div class="chart-x" aria-hidden="true">${data.bars.map(b => `<span>${b.showLabel ? esc(b.label) : ''}</span>`).join('')}</div>
     </div>
-    <p class="chart-axis-note">По вертикалі: ${yLabel}</p>
-    <p class="chart-info" id="chartInfo" aria-live="polite">Наведіть або торкніться стовпчика, щоб побачити деталі.</p>`;
+    <p class="chart-axis-note">${yLabel[0].toUpperCase() + yLabel.slice(1)}</p>
+    <p class="chart-info" id="chartInfo" aria-live="polite">Торкніться стовпчика.</p>`;
   chartDlg._bars = data.bars;
   chartDlg._kind = kind;
 }
