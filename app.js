@@ -252,8 +252,9 @@ function renderReview() {
     const next = live().filter(w => w.lastReview).sort((a, b) => a.due - b.due)[0];
     return next ? `Наступні слова чекатимуть ${esc(dueLabel(next).text)}.` : 'Додайте нові слова, щоб продовжити.';
   };
-  if (todo === 0 && lastSummary && lastSummary.lang === deck()) {
-    root.innerHTML = summaryHtml(lastSummary, nextLine(), c);
+  // Підсумок показуємо й після виходу з сесії посередині — тоді з кнопкою «Продовжити»
+  if (lastSummary && lastSummary.lang === deck()) {
+    root.innerHTML = summaryHtml(lastSummary, nextLine(), todo);
     return;
   }
   if (todo === 0) {
@@ -266,19 +267,34 @@ function renderReview() {
       </div>`;
     return;
   }
-  const parts = [];
-  if (c.due) parts.push(`${c.due} на повторення`);
-  if (c.fresh) parts.push(`${c.fresh} ${plural(c.fresh, ['нове', 'нові', 'нових'])}`);
-  // Пояснення лише на початку; далі — склад черги й приблизний час
-  const help = reviewsTotal() < 20
-    ? 'Згадайте переклад, відкрийте його й оцініть, наскільки легко пригадали.'
-    : `${parts.join(' і ')}, приблизно ${estimateMinutes()} хв.`;
-  root.innerHTML = `
-    <div class="intro glass">
-      <h2>Сьогодні ${nWords(todo)}</h2>
-      <p>${help}</p>
+  root.innerHTML = startHtml(c, todo);
+}
+
+// Стос скляних карток: що більше слів сьогодні, то вищий стос (до трьох шарів)
+function startHtml(c, todo) {
+  const layers = Math.min(2, todo - 1);
+  const duePct = Math.round((c.due / todo) * 100);
+  const first = reviewsTotal() < 20; // новачкові — одне речення, як це працює
+  const legend = [
+    c.due ? `<span><i class="mix-dot due"></i>${c.due} на повторення</span>` : '',
+    c.fresh ? `<span><i class="mix-dot new"></i>${c.fresh} ${plural(c.fresh, ['нове', 'нові', 'нових'])}</span>` : '',
+  ].join('');
+  return `
+    <div class="start">
+      <div class="stack" style="--layers:${layers}">
+        ${layers >= 2 ? '<div class="stack-layer l2" aria-hidden="true"></div>' : ''}
+        ${layers >= 1 ? '<div class="stack-layer l1" aria-hidden="true"></div>' : ''}
+        <div class="stack-card glass">
+          <h2>На вас ${plural(todo, ['чекає', 'чекають', 'чекають'])} ${nWords(todo)}</h2>
+          <div class="mix" aria-hidden="true">
+            ${c.due ? `<i class="mix-due" style="flex-basis:${duePct}%"></i>` : ''}${c.fresh ? '<i class="mix-new"></i>' : ''}
+          </div>
+          <p class="mix-legend">${legend}</p>
+          <p class="stack-foot">${first ? 'Згадайте переклад, відкрийте його й оцініть, наскільки легко пригадали.' : `Приблизно ${estimateMinutes()} хв`}</p>
+        </div>
+      </div>
       ${goalStrip()}
-      <button class="btn primary" type="button" data-act="start">Почати повторення</button>
+      <button class="btn primary start-btn" type="button" data-act="start">Почати</button>
     </div>`;
 }
 
@@ -311,19 +327,21 @@ function goalStrip() {
 }
 // Підсумок щойно завершеної сесії
 let lastSummary = null;
-function summaryHtml(sm, nextLine, c) {
+function summaryHtml(sm, nextLine, todo) {
   const mins = Math.round((sm.ended - sm.started) / MIN);
   const took = mins < 1 ? 'за хвилину' : `за ${mins} хв`;
   const names = ['Знову', 'Важко', 'Добре', 'Легко'];
+  const more = todo > 0;
   return `
     <div class="intro glass summary">
-      <h2 tabindex="-1">Готово: ${nWords(sm.words)} ${took}</h2>
-      <p>${sm.fresh ? `${sm.fresh} ${plural(sm.fresh, ['нове', 'нові', 'нових'])}. ` : ''}${nextLine}</p>
+      <h2 tabindex="-1">${more ? 'Пройдено' : 'Готово'}: ${nWords(sm.words)} ${took}</h2>
+      <p>${sm.fresh ? `${sm.fresh} ${plural(sm.fresh, ['нове', 'нові', 'нових'])}. ` : ''}${more ? `Ще ${todo} на сьогодні.` : nextLine}</p>
       <div class="tally">${sm.grades.map((n, i) => (n ? `<span class="g${i}">${names[i]} <b>${n}</b></span>` : '')).join('')}</div>
       ${goalStrip()}
       <div class="row-btns">
-        <button class="btn primary" type="button" data-act="progress">Прогрес</button>
-        <button class="btn ghost" type="button" data-act="add">Додати слово</button>
+        ${more
+          ? '<button class="btn primary" type="button" data-act="start">Продовжити</button><button class="btn ghost" type="button" data-act="progress">Прогрес</button>'
+          : '<button class="btn primary" type="button" data-act="progress">Прогрес</button><button class="btn ghost" type="button" data-act="add">Додати слово</button>'}
       </div>
     </div>`;
 }
@@ -333,6 +351,7 @@ root.addEventListener('click', e => {
   if (act === 'add') return openEditor();
   if (act === 'start') return startSession();
   if (act === 'progress') return go('progress');
+  if (act === 'exit') return exitSession();
   if (act === 'speak-form') {
     e.stopPropagation();
     const w = currentWord(), b = e.target.closest('button');
@@ -371,6 +390,9 @@ function renderCard(fresh = true) {
   const size = w.word.length > 18 || longest > 13 ? 'long' : longest > 8 ? 'mid' : '';
   root.innerHTML = `
     <div class="progress">
+      <button class="icon-btn" type="button" data-act="exit" aria-label="Вийти з повторення" title="Вийти (Esc)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
       <span>${session.done} з ${session.total}</span>
       <span class="progress-bar"><i style="width:${pct}%"></i></span>
       <button class="icon-btn" type="button" data-act="edit" aria-label="Редагувати слово">
@@ -446,17 +468,28 @@ function grade(g) {
   persist();
   if (!session.queue.length) {
     const st = session.stats;
-    lastSummary = { lang: deck(), grades: st.grades, words: st.ids.size, fresh: st.fresh, started: st.started, ended: Date.now() };
-    session = null;
-    renderReview();
-    root.querySelector('h2')?.focus?.();
+    endSession();
     return;
   }
   renderCard(true);
 }
 
+// Кінець сесії — повний чи достроковий. Якщо нічого не оцінено, підсумок не потрібен.
+function endSession() {
+  const st = session.stats;
+  lastSummary = st.ids.size
+    ? { lang: deck(), grades: st.grades, words: st.ids.size, fresh: st.fresh, started: st.started, ended: Date.now() }
+    : null;
+  session = null;
+  if (synth) synth.cancel();
+  renderReview();
+  root.querySelector('h2')?.focus?.();
+}
+function exitSession() { if (session) endSession(); }
+
 document.addEventListener('keydown', e => {
   if (currentView !== 'review' || !session || $('#editor').open) return;
+  if (e.key === 'Escape') { e.preventDefault(); return exitSession(); }
   if (e.target.matches('input, textarea, select')) return;
   if ((e.key === ' ' || e.key === 'Enter') && e.target.matches('button')) return; // кнопка натиснеться сама
   if (e.key === ' ' || e.key === 'Enter') {
