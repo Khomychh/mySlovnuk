@@ -761,9 +761,30 @@ function renderVoiceSettings() {
   voiceSel.value = vs.some(v => v.voiceURI === cfg().voiceURI) ? cfg().voiceURI : '';
   voiceSel.disabled = !vs.length;
 }
+/* ---------------- Тема ---------------- */
+// Зберігається на пристрої (не синхронізується): на телефоні й ноутбуці можна по-різному
+const THEME_KEY = 'slovnyk.theme';
+const THEME_BG = { light: '#DDE6E1', dark: '#0E2C2D' };
+const getTheme = () => { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch { return 'auto'; } };
+function applyTheme(t) {
+  const root = document.documentElement;
+  if (t === 'light' || t === 'dark') root.dataset.theme = t; else delete root.dataset.theme;
+  // колір смуги браузера: примусова тема перекриває системну
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+    m.content = t === 'auto' ? (m.media.includes('dark') ? THEME_BG.dark : THEME_BG.light) : THEME_BG[t];
+  });
+}
+$('#themePick').addEventListener('change', e => {
+  const t = e.target.value;
+  try { localStorage.setItem(THEME_KEY, t); } catch {}
+  applyTheme(t);
+});
+applyTheme(getTheme());
+
 function renderSettings() {
   const c = cfg();
   renderDecks();
+  const th = document.querySelector(`#themePick input[value="${getTheme()}"]`); if (th) th.checked = true;
   $('#deckNote').textContent = `Для мови «${langLabelLower(deck())}».`;
   renderVoiceSettings();
   $('#setRate').value = c.rate;
@@ -1441,6 +1462,7 @@ function toast(msg) {
 
 // Інша вкладка зберегла зміни: беремо їх, щоб вкладки не затирали одна одну
 window.addEventListener('storage', e => {
+  if (e.key === THEME_KEY) { applyTheme(getTheme()); if (currentView === 'settings') renderSettings(); return; }
   if (e.key !== KEY || !e.newValue) return;
   const fresh = load();
   db.words = fresh.words; db.settings = fresh.settings; db.meta = fresh.meta; db.log = fresh.log;

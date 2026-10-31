@@ -110,6 +110,7 @@ h1, h2, h3, p { margin: 0; }
   :root:not([data-theme="light"]) .p4 { opacity: .18; }
 }
 :root[data-theme="dark"] .pebble { opacity: .32; }
+:root[data-theme="dark"] .p4 { opacity: .18; }
 
 /* ============ Скло ============ */
 .glass {
@@ -840,3 +841,26 @@ kbd {
 .start .goal-strip { margin-top: 0; }
 .start-btn { width: 100%; min-height: 54px; font-size: var(--t-l); }
 .progress .icon-btn[data-act="exit"] { flex: none; }
+
+/* ============ Перемикач теми ============ */
+.segmented {
+  display: flex; gap: 4px; margin-top: 14px; padding: 4px;
+  border-radius: 16px; border: 1px solid var(--glass-edge); background: var(--glass-lo);
+}
+.segmented label { flex: 1 1 0; min-width: 0; cursor: pointer; }
+.segmented input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.segmented span {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 42px; padding: 0 8px; border-radius: 12px;
+  font-weight: 500; font-size: .92rem; color: var(--ink-soft);
+  transition: background-color .2s ease, color .2s ease, box-shadow .2s ease;
+}
+.segmented span svg { width: 18px; height: 18px; }
+.segmented input:checked + span { background: var(--glass-hi); color: var(--ink); box-shadow: inset 0 0 0 1px var(--glass-edge), 0 6px 14px -10px var(--glass-shade); }
+.segmented input:checked + span svg { color: var(--accent); }
+.segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Кнопка «+»: без «пігулки» вкладок; усі іконки панелі — по центру по вертикалі */
+.dock button { justify-content: center; }
+.dock .dock-add svg { padding: 0; width: 26px; height: 26px; border-radius: 0; background: none; box-shadow: none; }
+.dock .dock-add:hover svg { background: none; }
