@@ -1006,3 +1006,12 @@ input::placeholder, textarea::placeholder { color: var(--ink-faint); opacity: 1;
 .ans-legend b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
 .ans-legend li.zero { opacity: .5; }
 .ans-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+/* Кнопка «Вчити» на верхній картці стосу */
+.stack-card .start-btn { margin-top: 18px; position: relative; }
+.start-kbd {
+  position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+  background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.3); color: inherit; opacity: .8;
+}
+@media (hover: none) { .start-kbd { display: none; } }
+.stack-foot { padding-top: 12px; }

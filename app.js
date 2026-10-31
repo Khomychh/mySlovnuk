@@ -292,10 +292,10 @@ function startHtml(c, todo) {
           </div>
           <p class="mix-legend">${legend}</p>
           <p class="stack-foot">${first ? 'Згадайте переклад, відкрийте його й оцініть, наскільки легко пригадали.' : `Приблизно ${estimateMinutes()} хв`}</p>
+          <button class="btn primary start-btn" type="button" data-act="start">Вчити</button>
         </div>
       </div>
       ${goalStrip()}
-      <button class="btn primary start-btn" type="button" data-act="start">Почати</button>
     </div>
     ${todayStatsPanel()}`;
 }
@@ -342,7 +342,7 @@ function summaryHtml(sm, nextLine, todo) {
       ${goalStrip()}
       <div class="row-btns">
         ${more
-          ? '<button class="btn primary" type="button" data-act="start">Продовжити</button><button class="btn ghost" type="button" data-act="progress">Прогрес</button>'
+          ? '<button class="btn primary" type="button" data-act="start">Вчити</button><button class="btn ghost" type="button" data-act="progress">Прогрес</button>'
           : '<button class="btn primary" type="button" data-act="progress">Прогрес</button><button class="btn ghost" type="button" data-act="add">Додати слово</button>'}
       </div>
     </div>
@@ -394,7 +394,7 @@ function renderCard(fresh = true) {
   const size = w.word.length > 18 || longest > 13 ? 'long' : longest > 8 ? 'mid' : '';
   root.innerHTML = `
     <div class="progress">
-      <button class="icon-btn" type="button" data-act="exit" aria-label="Вийти з повторення" title="Вийти (Esc)">
+      <button class="icon-btn" type="button" data-act="exit" aria-label="Вийти з повторення" title="Вийти">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
       <span>${session.done} з ${session.total}</span>
@@ -429,12 +429,10 @@ function renderCard(fresh = true) {
     </article>
     <div class="actions">
       ${session.revealed ? gradesHtml(w) : `<button class="btn primary reveal-btn" type="button" data-act="reveal">Показати переклад</button>`}
-      <p class="keys-hint">${session.revealed ? keysBack(w) : '<kbd>Пробіл</kbd> переклад <kbd>R</kbd> вимова'}</p>
     </div>`;
   if (fresh && cfg().autoSpeak && !session.revealed) speak(w.word, root.querySelector('.speak'));
 }
 
-const keysBack = w => `<kbd>1</kbd>–<kbd>4</kbd> оцінка <kbd>R</kbd> вимова${hasAnswerAudio(w) ? ` <kbd>E</kbd> ${w.examples?.length ? 'приклади' : 'форми'}` : ''}`;
 function gradesHtml(w) {
   const names = ['Знову', 'Важко', 'Добре', 'Легко'];
   return `<div class="grades" tabindex="-1" role="group" aria-label="Наскільки легко згадали">${names.map((n, g) =>
@@ -449,7 +447,7 @@ function reveal() {
   slab.querySelector('.answer-content').removeAttribute('aria-hidden');
   const actions = root.querySelector('.actions');
   const w = currentWord();
-  actions.innerHTML = `${gradesHtml(w)}<p class="keys-hint">${keysBack(w)}</p>`;
+  actions.innerHTML = gradesHtml(w);
   if (hasAnswerAudio(w) && cfg(w.lang).autoSpeak && cfg(w.lang).autoExamples) speakAnswer(w);
   actions.querySelector('.grades').focus({ preventScroll: true });
 }
@@ -492,6 +490,12 @@ function endSession() {
 function exitSession() { if (session) endSession(); }
 
 document.addEventListener('keydown', e => {
+  if (currentView === 'review' && !session && (e.key === 'Enter' || e.key === ' ')
+      && !document.querySelector('dialog[open]') && !e.target.closest?.('input, textarea, select, button, a, summary')
+      && root.querySelector('[data-act="start"]')) {
+    e.preventDefault();
+    return startSession();
+  }
   if (currentView !== 'review' || !session || $('#editor').open) return;
   if (e.key === 'Escape') { e.preventDefault(); return exitSession(); }
   if (e.target.matches('input, textarea, select')) return;
