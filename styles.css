@@ -1015,3 +1015,12 @@ input::placeholder, textarea::placeholder { color: var(--ink-faint); opacity: 1;
 }
 @media (hover: none) { .start-kbd { display: none; } }
 .stack-foot { padding-top: 12px; }
+
+/* ============ Встановлення ============ */
+.install-btn { margin-top: 16px; }
+.install-steps { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 6px; color: var(--ink-soft); font-size: .92rem; }
+.install-steps li::marker { color: var(--accent); font-weight: 600; }
+.install-other { margin-top: 14px; }
+.install-other summary { cursor: pointer; font-size: .92rem; font-weight: 500; color: var(--ink-soft); padding: 6px 0; }
+.install-os { margin-top: 12px; font-weight: 600; font-size: .92rem; }
+.install-os + .install-steps { margin-top: 6px; }

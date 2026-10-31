@@ -928,9 +928,58 @@ $('#themePick').addEventListener('change', e => {
 });
 applyTheme(getTheme());
 
+/* ---------------- Встановлення як застосунок ---------------- */
+// Chrome і Edge дають власну кнопку встановлення; Safari — лише вручну через «Поділитися»
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; renderInstall(); });
+window.addEventListener('appinstalled', () => { installEvt = null; renderInstall(); toast('Застосунок встановлено'); });
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const INSTALL_STEPS = {
+  ios: ['iPhone чи iPad', ['Відкрийте сайт у Safari.', 'Натисніть «Поділитися»: квадрат зі стрілкою вгору.', 'Виберіть «На Початковий екран», потім «Додати».']],
+  android: ['Android', ['Відкрийте сайт у Chrome.', 'Натисніть меню ⋮ угорі праворуч.', 'Виберіть «Встановити застосунок» або «Додати на головний екран».']],
+  desktop: ['Комп’ютер', ['Відкрийте сайт у Chrome або Edge.', 'Натисніть значок встановлення праворуч в адресному рядку або меню ⋮ і «Встановити Словник».']],
+  mac: ['Mac із Safari', ['У меню «Файл» виберіть «Додати на Dock».']],
+};
+function platform() {
+  const ua = navigator.userAgent;
+  if (/iphone|ipad|ipod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'ios';
+  if (/android/i.test(ua)) return 'android';
+  if (/macintosh/i.test(ua) && /safari/i.test(ua) && !/chrome|crios|edg/i.test(ua)) return 'mac';
+  return 'desktop';
+}
+const stepsHtml = list => list.map(t => `<li>${esc(t)}</li>`).join('');
+function renderInstall() {
+  const panel = $('#installPanel');
+  if (!panel) return;
+  const pf = platform();
+  if (isStandalone()) {
+    $('#installNote').textContent = 'Уже встановлено на цьому пристрої.';
+    $('#installBtn').hidden = true;
+    $('#installSteps').innerHTML = '';
+    $('#installOtherBox').hidden = true;
+    return;
+  }
+  $('#installNote').textContent = 'Відкривається як окремий застосунок і працює без інтернету.';
+  $('#installBtn').hidden = !installEvt;
+  // якщо браузер сам пропонує встановлення — досить кнопки; інакше кроки для цього пристрою
+  $('#installSteps').innerHTML = installEvt ? '' : stepsHtml(INSTALL_STEPS[pf][1]);
+  $('#installOtherBox').hidden = false;
+  $('#installOther').innerHTML = Object.entries(INSTALL_STEPS)
+    .filter(([k]) => installEvt || k !== pf)
+    .map(([, [name, list]]) => `<p class="install-os">${esc(name)}</p><ol class="install-steps">${stepsHtml(list)}</ol>`).join('');
+}
+$('#installBtn').addEventListener('click', async () => {
+  if (!installEvt) return;
+  installEvt.prompt();
+  const { outcome } = await installEvt.userChoice.catch(() => ({}));
+  if (outcome === 'accepted') installEvt = null;
+  renderInstall();
+});
+
 function renderSettings() {
   const c = cfg();
   renderDecks();
+  renderInstall();
   const th = document.querySelector(`#themePick input[value="${getTheme()}"]`); if (th) th.checked = true;
   $('#deckNote').textContent = `Для мови «${langLabelLower(deck())}».`;
   renderVoiceSettings();
