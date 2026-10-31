@@ -46,10 +46,16 @@
     <section class="view" id="view-list" data-view="list" hidden aria-label="Мої слова">
       <div class="search glass">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
-        <input id="search" type="search" placeholder="Пошук слова, перекладу чи коментаря" autocomplete="off" aria-label="Пошук">
+        <input id="search" type="search" placeholder="Пошук" autocomplete="off" aria-label="Пошук слова, перекладу, прикладу чи коментаря">
       </div>
-      <p class="list-meta" id="listMeta"></p>
-      <ul class="word-list" id="wordList"></ul>
+      <div class="list-head">
+        <p class="list-meta" id="listMeta"></p>
+        <div class="segmented small" id="listSort" role="radiogroup" aria-label="Порядок слів">
+          <label><input type="radio" name="sort" value="new"><span>Новіші</span></label>
+          <label><input type="radio" name="sort" value="az"><span>А–Я</span></label>
+        </div>
+      </div>
+      <ul class="word-list glass" id="wordList"></ul>
     </section>
 
     <!-- Прогрес -->
@@ -64,9 +70,9 @@
         </div>
         <div class="cal-grid" id="calGrid"></div>
         <div class="legend">
-          <span><i class="st-mark done"></i>Ціль досягнуто</span>
+          <span><i class="st-mark done"></i>Досягнуто</span>
           <span><i class="st-mark try"></i>Спроба</span>
-          <span><i class="st-mark none"></i>Без повторень</span>
+          <span><i class="st-mark none"></i>Пропуск</span>
         </div>
       </div>
       <div class="panel glass day-panel" id="dayPanel" aria-live="polite"></div>

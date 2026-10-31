@@ -505,36 +505,58 @@ document.addEventListener('keydown', e => {
 
 /* ---------------- Список ---------------- */
 const listEl = $('#wordList');
+// Порядок списку — налаштування пристрою: «Новіші» або «А–Я»
+const SORT_KEY = 'slovnyk.sort';
+const getSort = () => { try { return localStorage.getItem(SORT_KEY) === 'az' ? 'az' : 'new'; } catch { return 'new'; } };
+function sortWords(list) {
+  if (getSort() === 'az') {
+    const coll = new Intl.Collator(deck(), { sensitivity: 'base' });
+    return list.sort((a, b) => coll.compare(a.word, b.word));
+  }
+  // Слова, додані в ту саму хвилину (наприклад набором), лишаються в порядку додавання
+  const idx = new Map(db.words.map((w, i) => [w.id, i]));
+  const minute = t => Math.floor((t || 0) / MIN);
+  return list.sort((a, b) => minute(b.createdAt) - minute(a.createdAt) || idx.get(a.id) - idx.get(b.id));
+}
 function renderList() {
   const q = $('#search').value.trim().toLowerCase();
-  const all = live().sort((a, b) => b.createdAt - a.createdAt);
+  const all = sortWords(live());
   const items = q ? all.filter(w => [w.word, w.translation, w.comment, w.transcription, formatExamples(w.examples), (w.forms || []).join(' ')].some(s => (s || '').toLowerCase().includes(q))) : all;
-  $('#listMeta').textContent = all.length === 0 ? '' : q ? `Знайдено ${nWords(items.length)} з ${all.length}` : `${langLabel(deck())}: ${nWords(all.length)}`;
+  $('#listMeta').textContent = all.length === 0 ? '' : q ? `Знайдено ${items.length} з ${all.length}` : `${langLabel(deck())}: ${nWords(all.length)}`;
+  $('#listSort').hidden = all.length < 2;
+  const so = document.querySelector(`#listSort input[value="${getSort()}"]`); if (so) so.checked = true;
+  listEl.classList.toggle('is-empty', !items.length);
   if (!all.length) {
     listEl.innerHTML = `<li class="empty">Тут з'являться ваші слова.<br><button class="btn primary" type="button" data-act="add">Додати слово</button></li>`;
     return;
   }
   if (!items.length) {
-    listEl.innerHTML = `<li class="empty">Нічого не знайдено за запитом «${esc(q)}». Спробуйте інше слово або <button class="btn ghost small" type="button" data-act="add-q">додайте «${esc($('#search').value.trim())}»</button></li>`;
+    const raw = $('#search').value.trim();
+    listEl.innerHTML = `<li class="empty">Не знайдено «${esc(raw)}».<br><button class="btn ghost small" type="button" data-act="add-q">Додати «${esc(raw)}»</button></li>`;
     return;
   }
   listEl.innerHTML = items.map(w => {
     const d = dueLabel(w);
+    // Статус: «сьогодні» — помітно; нове — лише крапка; решта — блідо
+    const status = !w.lastReview
+      ? '<span class="due-new" title="Нове слово"><span class="sr">нове</span></span>'
+      : `<span class="due ${d.now ? 'now' : ''}">${d.text}</span>`;
     return `<li class="word-row" data-id="${w.id}">
       <button class="open" type="button" data-act="open">
-        <span class="row-word" lang="${esc(w.lang)}">${esc(w.word)}${w.transcription ? `<span class="ipa">${esc(w.transcription)}</span>` : ''}</span>
-        <span class="row-tr">${esc(w.translation)}</span>
-        ${w.forms?.length ? `<span class="row-forms" lang="${esc(w.lang)}">${esc(w.forms.join(', '))}</span>` : ''}
+        <span class="row-line1"><span class="row-word" lang="${esc(w.lang)}">${esc(w.word)}</span>${w.transcription ? `<span class="row-ipa">${esc(w.transcription)}</span>` : ''}</span>
+        <span class="row-line2"><span class="row-tr">${esc(w.translation)}</span>${w.forms?.length ? `<span class="row-forms" lang="${esc(w.lang)}">${esc(w.forms.join(', '))}</span>` : ''}</span>
       </button>
-      <span class="row-side">
-        <span class="due ${d.now ? 'now' : ''}">${d.text}</span>
-        <button class="icon-btn" type="button" data-act="say" aria-label="Прослухати ${esc(w.word)}">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
-        </button>
-      </span>
+      ${status}
+      <button class="icon-btn row-say" type="button" data-act="say" aria-label="Прослухати ${esc(w.word)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+      </button>
     </li>`;
   }).join('');
 }
+$('#listSort').addEventListener('change', e => {
+  try { localStorage.setItem(SORT_KEY, e.target.value); } catch {}
+  renderList();
+});
 $('#search').addEventListener('input', renderList);
 listEl.addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
@@ -1248,7 +1270,7 @@ function dayStatus(day, l = deck()) {
   const n = dayCount(day, l);
   return n === 0 ? 'none' : n >= dayGoal(day, l) ? 'done' : 'try';
 }
-const STATUS_TEXT = { done: 'ціль досягнуто', try: 'спроба', none: 'без повторень' };
+const STATUS_TEXT = { done: 'ціль досягнуто', try: 'спроба', none: 'пропуск' };
 
 function setGoal(n) {
   const v = Math.max(1, Math.min(500, Math.round(n) || 1));
@@ -1310,6 +1332,24 @@ function pebblesHtml(n, goal) {
         `<i class="${i < n ? 'on' : i === n ? 'next' : ''}"></i>`).join('')}${n > goal ? `<span class="extra">+${n - goal}</span>` : ''}</div>`
     : `<div class="goal-bar" aria-hidden="true"><i style="width:${Math.min(100, (n / goal) * 100)}%"></i></div>`;
 }
+// Серія: дні поспіль із досягнутою ціллю. Сьогоднішній день серію не обриває, поки не скінчився.
+function streaks() {
+  const t = todayDate();
+  let cur = 0;
+  for (let d = dayStatus(keyOfDate(t)) === 'done' ? t : addDays(t, -1); dayStatus(keyOfDate(d)) === 'done'; d = addDays(d, -1)) cur++;
+  let best = 0, run = 0;
+  for (let d = firstDay(); d <= t; d = addDays(d, 1)) {
+    run = dayStatus(keyOfDate(d)) === 'done' ? run + 1 : 0;
+    if (run > best) best = run;
+  }
+  return { cur, best };
+}
+function streakLine() {
+  const { cur, best } = streaks();
+  if (!best) return '';
+  if (!cur) return `<p class="streak">Найдовша серія: ${nDays(best)}</p>`;
+  return `<p class="streak"><b>${nDays(cur)} поспіль</b>${best > cur ? `, найдовша серія ${nDays(best)}` : ', це ваш рекорд'}</p>`;
+}
 function renderToday() {
   const today = dayKey(Date.now());
   const n = dayCount(today), goal = goalOf();
@@ -1318,6 +1358,7 @@ function renderToday() {
   const pebbles = pebblesHtml(n, goal);
   $('#todayCard').innerHTML = `
     <h2>${head}</h2>
+    ${streakLine()}
     <div role="progressbar" aria-label="Ціль дня" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${Math.min(n, goal)}">${pebbles}</div>
     <div class="goal-row">
       <span id="goalLabel">Ціль на день</span>
@@ -1343,7 +1384,17 @@ function renderPeriods() {
     ['year', `${todayDate().getFullYear()} рік`],
     ['all', 'Увесь час'],
   ];
+  const yr = periodRange('year');
+  const allSame = firstDay() >= yr.from; // увесь час = цей рік, поки вчите менше року
+  const c = counts();
   $('#periodGrid').innerHTML = tiles.map(([kind, name]) => {
+    if (kind === 'all' && allSame) {
+      return `<div class="period static" aria-label="Вивчено ${nWords(c.learned)} з ${c.total}">
+        <span class="period-name">Вивчено</span>
+        <span class="period-num">${c.learned}</span>
+        <span class="period-sub">з ${nWords(c.total)}</span>
+      </div>`;
+    }
     const { from, to } = periodRange(kind);
     const st = rangeStats(from, to);
     return `<button type="button" class="period" data-period="${kind}" aria-label="${name}: ціль досягнуто ${nDays(st.done)} з ${st.days}. Відкрити діаграму">
@@ -1389,6 +1440,7 @@ $('#calGrid').addEventListener('click', e => {
   const b = e.target.closest('[data-day]');
   if (!b) return;
   selectedDay = b.dataset.day;
+  dayAll = false;
   renderCalendar();
   renderDay();
   if (matchMedia('(max-width: 700px)').matches) $('#dayPanel').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
@@ -1417,7 +1469,7 @@ function renderDay() {
     const items = entries
       .map(([id, e]) => ({ w: byId.get(id), e }))
       .sort((a, b) => (b.e.a || 0) - (a.e.a || 0));
-    const shown = items.slice(0, 12);
+    const shown = dayAll ? items : items.slice(0, 5);
     body = `
       <p class="day-line"><span class="st-mark ${st}" aria-hidden="true"></span>${nWords(n)} при цілі ${goal}: ${STATUS_TEXT[st]}.</p>
       <div class="tally">
@@ -1426,14 +1478,23 @@ function renderDay() {
         ${grades.map((c, i) => c ? `<span class="g${i}">${names[i]} <b>${c}</b></span>` : '').join('')}
       </div>
       <ul class="day-words">${shown.map(({ w, e }) => `<li>
-        <span class="dw-word" lang="${esc(deck())}">${w && !w.deleted ? esc(w.word) : 'Видалене слово'}</span>
-        <span class="dw-tr">${w && !w.deleted ? esc(w.translation) : ''}</span>
+        <span class="dw-text">
+          <span class="dw-word" lang="${esc(deck())}">${w && !w.deleted ? esc(w.word) : 'Видалене слово'}</span>
+          ${w && !w.deleted ? `<span class="dw-tr">${esc(w.translation)}</span>` : ''}
+        </span>
         ${e.a ? '<span class="dw-tag">нове</span>' : ''}
       </li>`).join('')}</ul>
-      ${items.length > shown.length ? `<p class="muted">І ще ${nWords(items.length - shown.length)}.</p>` : ''}`;
+      ${items.length > 5 ? `<button type="button" class="btn ghost small day-more" data-day-more>${dayAll ? 'Згорнути' : `Показати всі ${items.length}`}</button>` : ''}`;
   }
   $('#dayPanel').innerHTML = `<h2>${title}</h2>${body}`;
 }
+let dayAll = false; // розгорнутий список слів дня
+$('#dayPanel').addEventListener('click', e => {
+  if (!e.target.closest('[data-day-more]')) return;
+  dayAll = !dayAll;
+  renderDay();
+  $('#dayPanel [data-day-more]')?.focus();
+});
 
 /* ---- Діаграми за період ---- */
 const chartDlg = $('#chartDlg');
