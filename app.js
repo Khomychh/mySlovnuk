@@ -751,16 +751,115 @@ const langLabelLower = code => langLabel(code).toLowerCase();
 const byLabel = (a, b) => langLabel(a).localeCompare(langLabel(b), 'uk');
 const decks = () => Object.keys(db.settings.langs).sort(byLabel);
 
-function renderVoiceSettings() {
-  const voiceSel = $('#setVoice');
-  if (!voiceSel) return;
-  const vs = voicesFor(deck());
-  voiceSel.innerHTML = vs.length
-    ? `<option value="">Автоматично</option>` + vs.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name)}</option>`).join('')
-    : `<option value="">У цьому браузері немає голосу для цієї мови</option>`;
-  voiceSel.value = vs.some(v => v.voiceURI === cfg().voiceURI) ? cfg().voiceURI : '';
-  voiceSel.disabled = !vs.length;
+/* ---------------- Вибір голосу ---------------- */
+let regionNames;
+try { regionNames = new Intl.DisplayNames(['uk'], { type: 'region' }); } catch {}
+const regionLabel = r => { try { return (r && regionNames?.of(r)) || 'Інші'; } catch { return r || 'Інші'; } };
+// Власна назва мови її ж мовою: Deutsch, Français, 日本語
+const autonym = code => {
+  try { const n = new Intl.DisplayNames([code], { type: 'language' }).of(code); return n ? n[0].toLocaleUpperCase(code) + n.slice(1) : code; }
+  catch { return code; }
+};
+// Системні назви на зразок «Microsoft Libby Online (Natural) - English (United Kingdom)» → «Libby» + позначки
+function voiceInfo(v) {
+  const raw = v.name;
+  const vendor = (raw.match(/^(Google|Microsoft|Apple)\b/i) || [])[1] || '';
+  const gender = /female|woman/i.test(raw) ? 'жіночий' : /\bmale\b/i.test(raw) ? 'чоловічий' : '';
+  let name = raw.replace(/^(Google|Microsoft|Apple)\s+/i, '').replace(/\s*\((Natural|Enhanced|Premium)\)/ig, '')
+    .replace(/\s+Online\b/i, '').replace(/\s+-\s+.*$/, '').replace(/\b(Female|Male)\b/ig, '').trim();
+  const l = baseLang(v.lang);
+  // «UK English», «Deutsch» — це назва мови, а не голосу: тоді показуємо постачальника
+  if (!name || /^(UK|US|AU|IN|CA)?\s*English$/i.test(name) || name.toLowerCase() === autonym(l).toLowerCase()) name = vendor || raw;
+  return {
+    name,
+    meta: [gender, /natural|neural|premium|enhanced|online/i.test(raw) && 'природний', v.localService ? 'без інтернету' : 'через інтернет'].filter(Boolean).join(', '),
+    region: (v.lang.replace('_', '-').split('-')[1] || '').toUpperCase(),
+  };
 }
+const voiceOpen = new Set(); // групи, які користувач розгорнув сам
+const sampleText = () => SAMPLES[deck()] || live()[0]?.word || 'Hello';
+function previewVoice(v, btn) {
+  if (!synth || !v) return;
+  synth.cancel();
+  document.querySelectorAll('.speaking').forEach(b => b.classList.remove('speaking'));
+  const u = new SpeechSynthesisUtterance(sampleText());
+  u.voice = v; u.lang = v.lang; u.rate = cfg().rate;
+  if (btn) { u.onstart = () => btn.classList.add('speaking'); u.onend = u.onerror = () => btn.classList.remove('speaking'); }
+  setTimeout(() => synth.speak(u), 40);
+}
+const playIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
+function voiceRow(value, name, meta, on, playUri) {
+  return `<div class="voice-row ${on ? 'on' : ''}">
+    <label class="voice-pick"><input type="radio" name="voice" value="${esc(value)}" ${on ? 'checked' : ''}>
+      <span class="voice-dot" aria-hidden="true"></span>
+      <span class="voice-text"><span class="voice-name">${esc(name)}</span>${meta ? `<span class="voice-meta">${esc(meta)}</span>` : ''}</span>
+    </label>
+    ${playUri != null ? `<button type="button" class="voice-play" data-play="${esc(playUri)}" aria-label="Прослухати: ${esc(name)}" title="Прослухати">${playIcon}</button>` : ''}
+  </div>`;
+}
+function renderVoiceSettings() {
+  const box = $('#voiceList');
+  if (!box) return;
+  const l = deck();
+  const vs = voicesFor(l);
+  if (!vs.length) {
+    box.innerHTML = `<p class="voice-empty">${voices.length ? `У цьому браузері немає голосу для мови «${esc(langLabelLower(l))}». Слова не озвучуватимуться.` : 'Голоси ще завантажуються…'}</p>`;
+    return;
+  }
+  const chosen = vs.find(v => v.voiceURI === cfg(l).voiceURI);
+  const auto = pickVoice(l);
+  const autoInfo = voiceInfo(auto);
+  // Згорнуто: лише поточний голос. Повний список — тільки після «Змінити»
+  const cur = chosen ? voiceInfo(chosen) : autoInfo;
+  const head = `<div class="voice-current">
+    <span class="voice-text"><span class="voice-name">${esc(cur.name)}</span>
+      <span class="voice-meta">${esc([chosen ? '' : 'автоматично', regionLabel(cur.region)].filter(Boolean).join(', '))}</span></span>
+    <button type="button" class="voice-play" data-play="${esc((chosen || auto).voiceURI)}" aria-label="Прослухати: ${esc(cur.name)}" title="Прослухати">${playIcon}</button>
+    <button type="button" class="btn ghost small" data-voice-toggle aria-expanded="${voicePickerOpen}" aria-controls="voiceRows">${voicePickerOpen ? 'Згорнути' : 'Змінити'}</button>
+  </div>`;
+  if (!voicePickerOpen) { box.innerHTML = head; return; }
+  let html = voiceRow('', 'Автоматично', `Зараз: ${autoInfo.name}, ${regionLabel(autoInfo.region)}`, !chosen, chosen ? null : auto.voiceURI);
+  // Групи за регіоном (акцентом): спершу та, де вибраний голос, далі звичний регіон, далі найбільші
+  const groups = new Map();
+  for (const v of vs) { const r = voiceInfo(v).region; if (!groups.has(r)) groups.set(r, []); groups.get(r).push(v); }
+  const selRegion = voiceInfo(chosen || auto).region;
+  const order = [...groups.keys()].sort((a, b) => (b === selRegion) - (a === selRegion) || groups.get(b).length - groups.get(a).length);
+  const fewVoices = vs.length <= 8;
+  for (const r of order) {
+    const list = groups.get(r).map(v => ({ v, i: voiceInfo(v) }))
+      .sort((a, b) => (/природний/.test(b.i.meta) - /природний/.test(a.i.meta)) || a.i.name.localeCompare(b.i.name));
+    const open = fewVoices || r === selRegion || voiceOpen.has(r);
+    html += `<details class="voice-group" data-region="${esc(r)}" ${open ? 'open' : ''}>
+      <summary><span>${esc(regionLabel(r))}</span><span class="voice-count">${list.length}</span></summary>
+      <div class="voice-rows">${list.map(({ v, i }) => voiceRow(v.voiceURI, i.name, i.meta, chosen === v, v.voiceURI)).join('')}</div>
+    </details>`;
+  }
+  box.innerHTML = `${head}<div class="voice-options" id="voiceRows">${html}</div>`;
+}
+let voicePickerOpen = false;
+$('#voiceList').addEventListener('change', e => {
+  if (e.target.name !== 'voice') return;
+  setCfg('voiceURI', e.target.value);
+  voicePickerOpen = false; // вибрали — згортаємо
+  renderVoiceSettings();
+  previewVoice(pickVoice(deck()), $('#voiceList .voice-current .voice-play'));
+  $('#voiceList [data-voice-toggle]')?.focus();
+});
+$('#voiceList').addEventListener('click', e => {
+  if (e.target.closest('[data-voice-toggle]')) {
+    voicePickerOpen = !voicePickerOpen;
+    renderVoiceSettings();
+    $('#voiceList [data-voice-toggle]')?.focus();
+    return;
+  }
+  const b = e.target.closest('[data-play]');
+  if (b) previewVoice(voices.find(v => v.voiceURI === b.dataset.play), b);
+});
+$('#voiceList').addEventListener('toggle', e => {
+  const r = e.target.dataset?.region;
+  if (r == null) return;
+  if (e.target.open) voiceOpen.add(r); else voiceOpen.delete(r);
+}, true);
 /* ---------------- Тема ---------------- */
 // Зберігається на пристрої (не синхронізується): на телефоні й ноутбуці можна по-різному
 const THEME_KEY = 'slovnyk.theme';
@@ -795,13 +894,11 @@ function renderSettings() {
   renderGoogle();
 }
 function setCfg(k, v) { const c = cfg(); c[k] = v; c.updatedAt = Date.now(); persist(); }
-$('#setVoice').addEventListener('change', e => setCfg('voiceURI', e.target.value));
 $('#setRate').addEventListener('input', e => { $('#rateOut').textContent = `${Number(e.target.value).toFixed(2)}×`; });
 $('#setRate').addEventListener('change', e => setCfg('rate', +e.target.value));
 $('#setAuto').addEventListener('change', e => { setCfg('autoSpeak', e.target.checked); $('#setAutoEx').disabled = !e.target.checked; });
 $('#setAutoEx').addEventListener('change', e => setCfg('autoExamples', e.target.checked));
 const SAMPLES = { en: 'Hello, how are you?', de: 'Guten Tag, wie geht es Ihnen?', fr: 'Bonjour, comment allez-vous ?', es: 'Hola, ¿qué tal?', it: 'Ciao, come stai?', pl: 'Dzień dobry, jak się masz?', cs: 'Dobrý den, jak se máte?', pt: 'Olá, tudo bem?', ja: 'こんにちは', zh: '你好', ko: '안녕하세요', tr: 'Merhaba, nasılsın?' };
-$('#testVoice').addEventListener('click', e => speak(live()[0]?.word || SAMPLES[deck()] || 'Hello', e.currentTarget));
 
 /* ---------------- Перемикач мов (лише в налаштуваннях) ---------------- */
 // Кожна мова — скельце: назва, кількість слів, скільки чекає сьогодні.
@@ -821,13 +918,7 @@ function renderDecks() {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       <span class="deck-name">Додати мову</span>
     </button>`;
-  const have = new Set(list);
-  const options = [...new Set([...COMMON_LANGS, ...voices.map(v => baseLang(v.lang))])]
-    .filter(l => l && l !== 'uk' && !have.has(l) && langLabel(l) !== l)
-    .sort(byLabel);
-  $('#deckAddSel').innerHTML = `<option value="">Оберіть мову</option>` + options.map(l =>
-    `<option value="${esc(l)}">${esc(langLabel(l))}${voices.length && !voicesFor(l).length ? ' (немає голосу в цьому браузері)' : ''}</option>`).join('');
-  $('#deckAddBtn').disabled = true;
+  renderLangGrid();
   const canRemove = list.length > 1 && counts().total === 0;
   $('#deckRemove').hidden = !canRemove;
   $('#deckRemove').textContent = `Прибрати мову «${langLabelLower(deck())}»`;
@@ -847,7 +938,7 @@ $('#deckGrid').addEventListener('click', e => {
     const box = $('#deckAdd');
     box.hidden = !box.hidden;
     e.target.closest('#deckAddOpen').setAttribute('aria-expanded', String(!box.hidden));
-    if (!box.hidden) $('#deckAddSel').focus();
+    if (!box.hidden) { $('#langSearch').value = ''; renderLangGrid(); $('#langSearch').focus(); }
     return;
   }
   const pick = e.target.closest('[data-pick]')?.dataset.pick;
@@ -862,9 +953,30 @@ $('#deckGrid').addEventListener('keydown', e => {
   e.preventDefault();
   tiles[(i + (e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1) + tiles.length) % tiles.length].focus();
 });
-$('#deckAddSel').addEventListener('change', e => { $('#deckAddBtn').disabled = !e.target.value; });
-$('#deckAddBtn').addEventListener('click', () => {
-  const l = $('#deckAddSel').value;
+// Мови, які можна додати: українська назва, власна назва й позначка, якщо немає голосу
+function renderLangGrid() {
+  const have = new Set(decks());
+  const q = ($('#langSearch').value || '').trim().toLowerCase();
+  const all = [...new Set([...COMMON_LANGS, ...voices.map(v => baseLang(v.lang))])]
+    .filter(l => l && l !== 'uk' && !have.has(l) && langLabel(l) !== l)
+    .sort(byLabel);
+  const shown = q ? all.filter(l => [langLabel(l), autonym(l), l].some(t => t.toLowerCase().includes(q))) : all;
+  $('#langGrid').innerHTML = shown.length
+    ? shown.map(l => {
+        const own = autonym(l);
+        const noVoice = voices.length && !voicesFor(l).length;
+        // українська назва головна (за нею сортуємо), власна — під нею; якщо браузер її не знає, не дублюємо
+        return `<button type="button" class="lang-opt" data-add="${esc(l)}">
+          <span class="lang-uk">${esc(langLabel(l))}</span>
+          ${own.toLowerCase() !== langLabel(l).toLowerCase() ? `<span class="lang-own" lang="${esc(l)}">${esc(own)}</span>` : ''}
+          ${noVoice ? '<span class="lang-novoice">без голосу</span>' : ''}
+        </button>`;
+      }).join('')
+    : `<p class="voice-empty">Мову «${esc(q)}» не знайдено.</p>`;
+}
+$('#langSearch').addEventListener('input', renderLangGrid);
+$('#langGrid').addEventListener('click', e => {
+  const l = e.target.closest('[data-add]')?.dataset.add;
   if (!l) return;
   db.settings.langs[l] = { ...langDefaults, updatedAt: Date.now() };
   if (db.meta.removedLangs) delete db.meta.removedLangs[l];
